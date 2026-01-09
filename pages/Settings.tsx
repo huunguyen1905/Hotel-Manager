@@ -1,13 +1,13 @@
-
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { Plus, Trash, Save, Check, X, ShoppingCart, RefreshCw, Database, Radio, Globe, Send, AlertTriangle, Cpu, Lock } from 'lucide-react';
-import { Settings as SettingsType, ServiceItem, ItemCategory, WebhookConfig } from '../types';
+import { Plus, Trash, Save, Check, X, ShoppingCart, RefreshCw, Database, Radio, Globe, Send, AlertTriangle, Cpu, Lock, ChefHat, Pencil, Eye } from 'lucide-react';
+import { Settings as SettingsType, ServiceItem, ItemCategory, WebhookConfig, RoomRecipe } from '../types';
 import { MOCK_SERVICES } from '../constants';
 import { storageService } from '../services/storage';
+import { RecipeModal } from '../components/RecipeModal';
 
 export const Settings: React.FC = () => {
-  const { settings, updateSettings, services, addService, deleteService, notify, refreshData, webhooks, addWebhook, deleteWebhook, updateWebhook, triggerWebhook, getGeminiApiKey, setAppConfig } = useAppContext();
+  const { settings, updateSettings, services, addService, deleteService, notify, refreshData, webhooks, addWebhook, deleteWebhook, updateWebhook, triggerWebhook, getGeminiApiKey, setAppConfig, roomRecipes, deleteRoomRecipe } = useAppContext();
   const [localSettings, setLocalSettings] = useState(settings);
   
   // State for adding simple strings
@@ -21,6 +21,11 @@ export const Settings: React.FC = () => {
   // State for adding Webhook
   const [isAddingWebhook, setIsAddingWebhook] = useState(false);
   const [newWebhook, setNewWebhook] = useState<Partial<WebhookConfig>>({ url: '', event_type: 'residence_declaration', description: '', is_active: true });
+
+  // State for Recipes
+  const [isRecipeModalOpen, setRecipeModalOpen] = useState(false);
+  const [editingRecipeKey, setEditingRecipeKey] = useState<string | undefined>(undefined);
+  const [editingRecipeData, setEditingRecipeData] = useState<RoomRecipe | null>(null);
 
   // State for Gemini Key
   const [geminiKey, setGeminiKey] = useState('');
@@ -232,6 +237,66 @@ export const Settings: React.FC = () => {
              </div>
          </div>
 
+         {/* RECIPE CONFIG */}
+         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col h-full lg:col-span-3">
+             <div className="flex justify-between items-center mb-4">
+                <div>
+                   <h3 className="font-bold text-gray-800 flex items-center gap-2"><ChefHat size={20}/> Định Mức & Công Thức Phòng (Room Recipes)</h3>
+                   <p className="text-xs text-slate-500 mt-1">Thiết lập các món đồ (Amenity, Minibar, Linen) mặc định cho từng loại phòng.</p>
+                </div>
+                <button 
+                    onClick={() => { setEditingRecipeKey(undefined); setEditingRecipeData(null); setRecipeModalOpen(true); }}
+                    className="bg-brand-50 text-brand-700 hover:bg-brand-100 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors border border-brand-200"
+                >
+                    <Plus size={16}/> Tạo Công Thức Mới
+                </button>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                 {Object.entries(roomRecipes).map(([key, rawRecipe]) => {
+                     const recipe = rawRecipe as RoomRecipe;
+                     return (
+                     <div key={key} className="bg-slate-50 rounded-xl border border-slate-200 p-4 hover:border-brand-300 transition-all hover:shadow-md group">
+                         <div className="flex justify-between items-start mb-3">
+                             <div>
+                                 <div className="text-lg font-black text-slate-800">{key}</div>
+                                 <div className="text-xs text-slate-500 font-medium">{recipe.description}</div>
+                             </div>
+                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                 <button 
+                                    onClick={() => { setEditingRecipeKey(key); setEditingRecipeData(recipe); setRecipeModalOpen(true); }}
+                                    className="p-1.5 bg-white border border-slate-200 text-blue-600 rounded-lg hover:border-blue-300"
+                                 >
+                                     <Pencil size={14}/>
+                                 </button>
+                                 <button 
+                                    onClick={() => { if(confirm(`Xóa định mức ${key}?`)) deleteRoomRecipe(key); }}
+                                    className="p-1.5 bg-white border border-slate-200 text-rose-600 rounded-lg hover:border-rose-300"
+                                 >
+                                     <Trash size={14}/>
+                                 </button>
+                             </div>
+                         </div>
+                         
+                         {/* Item Summary */}
+                         <div className="flex flex-wrap gap-1.5">
+                             {recipe.items.slice(0, 5).map((item, idx) => (
+                                 <span key={idx} className="text-[10px] bg-white border border-slate-100 px-2 py-1 rounded text-slate-600 font-medium">
+                                     {item.itemId} <b className="text-brand-600">x{item.quantity}</b>
+                                 </span>
+                             ))}
+                             {recipe.items.length > 5 && (
+                                 <span className="text-[10px] bg-slate-200 px-2 py-1 rounded text-slate-500 font-bold">
+                                     +{recipe.items.length - 5}
+                                 </span>
+                             )}
+                         </div>
+                     </div>
+                     );
+                 })}
+             </div>
+         </div>
+
          {/* Webhooks Section */}
          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col h-full lg:col-span-3">
              <div className="flex justify-between items-center mb-4">
@@ -376,6 +441,13 @@ export const Settings: React.FC = () => {
          <Section title="Danh Mục Chi Phí" dataKey="expense_categories" />
          <Section title="Trạng Thái Phòng" dataKey="room_status" />
       </div>
+
+      <RecipeModal 
+          isOpen={isRecipeModalOpen} 
+          onClose={() => setRecipeModalOpen(false)}
+          recipeKey={editingRecipeKey}
+          existingRecipe={editingRecipeData}
+      />
     </div>
   );
 };

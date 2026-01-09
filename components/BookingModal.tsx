@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Modal } from './Modal';
-import { Booking, Payment, ServiceUsage, BookingStatus, GuestProfile, Guest, InventoryTransaction, SheetBooking } from '../types';
+import { Booking, Payment, ServiceUsage, BookingStatus, GuestProfile, Guest, InventoryTransaction, SheetBooking, LendingItem } from '../types';
 import { useAppContext } from '../context/AppContext';
 import { 
   FileText, ShoppingCart, Banknote, ScanLine, AlertTriangle, Loader2, LogIn, LogOut, CheckCircle,
-  Plus, Minus, Trash2, History, Upload, ShieldCheck, UserPlus, Users, ToggleLeft, ToggleRight, List, Group, Calendar, Check, Send, Printer, Save, XCircle, AlertOctagon, FileSpreadsheet
+  Plus, Minus, Trash2, History, Upload, ShieldCheck, UserPlus, Users, ToggleLeft, ToggleRight, List, Group, Calendar, Check, Send, Printer, Save, XCircle, AlertOctagon, FileSpreadsheet,
+  Package, Shirt
 } from 'lucide-react';
 import { format, parseISO, differenceInCalendarDays } from 'date-fns';
 import { GoogleGenAI } from "@google/genai";
@@ -70,6 +71,7 @@ const INITIAL_BOOKING_STATE: Partial<Booking> = {
     cleaningJson: '{}',
     assignedCleaner: '',
     servicesJson: '[]',
+    lendingJson: '[]',
     guestsJson: '[]',
     isDeclared: false,
     groupName: ''
@@ -80,7 +82,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
       facilities, rooms, services, currentUser, bookings,
       addBooking, updateBooking, checkAvailability,
       notify, triggerWebhook, upsertRoom, refreshData, webhooks, addGuestProfile,
-      updateService, addInventoryTransaction, getGeminiApiKey
+      updateService, addInventoryTransaction, getGeminiApiKey, processLendingUsage
   } = useAppContext();
   
   const [activeTab, setActiveTab] = useState<'info' | 'services' | 'payment' | 'ocr'>('info');
@@ -120,6 +122,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
 
   const [payments, setPayments] = useState<Payment[]>([]);
   const [usedServices, setUsedServices] = useState<ServiceUsage[]>([]);
+  const [lendingList, setLendingList] = useState<LendingItem[]>([]); // New Lending State
   const [guestList, setGuestList] = useState<Guest[]>([]);
   
   // Quick Payment Input State
@@ -154,6 +157,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
       setFormData(booking);
       setPayments(safeJsonParse(booking.paymentsJson));
       setUsedServices(safeJsonParse(booking.servicesJson));
+      setLendingList(safeJsonParse(booking.lendingJson)); // Load lending
       setGuestList(safeJsonParse(booking.guestsJson));
       setAvailabilityError('');
       
@@ -187,6 +191,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
       setFormData(initData);
       setPayments([]);
       setUsedServices([]);
+      setLendingList([]);
       setGuestList([]);
       setAvailabilityError('');
       setIsGroupMode(false);
@@ -320,6 +325,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
       }
   };
 
+  const handleLendingDeduction = async (currentLending: LendingItem[]) => {
+      const latestData = getLatestBooking();
+      const oldLending: LendingItem[] = latestData?.lendingJson ? safeJsonParse(latestData.lendingJson) : [];
+      const itemsToDeduct: {itemId: string, qty: number}[] = [];
+
+      for (const newItem of currentLending) {
+          const oldItem = oldLending.find(l => l.item_id === newItem.item_id);
+          const oldQty = oldItem ? oldItem.quantity : 0;
+          const diff = newItem.quantity - oldQty;
+
+          if (diff > 0) {
+              itemsToDeduct.push({ itemId: newItem.item_id, qty: diff });
+          }
+      }
+
+      if (itemsToDeduct.length > 0 && formData.facilityName && formData.roomCode) {
+          await processLendingUsage(formData.facilityName, formData.roomCode, itemsToDeduct);
+      }
+  };
+
   // ... (Group logic, Payment logic, Availability logic kept same) ...
   const groupMembers = useMemo(() => {
       const currentGroupId = formData.groupId || booking?.groupId;
@@ -397,23 +422,41 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
       const service = services.find(s => s.id === serviceId);
       if (!service) return;
 
-      setUsedServices(prev => {
-          const existing = prev.find(s => s.serviceId === serviceId);
-          if (existing) {
-              return prev.map(s => s.serviceId === serviceId 
-                  ? { ...s, quantity: s.quantity + 1, total: (s.quantity + 1) * s.price } 
-                  : s
-              );
-          }
-          return [...prev, {
-              serviceId: service.id,
-              name: service.name,
-              price: service.price,
-              quantity: 1,
-              total: service.price,
-              time: new Date().toISOString()
-          }];
-      });
+      // Logic Split: Consumable vs Lending
+      if (service.category === 'Linen' || service.category === 'Asset') {
+          // ADD TO LENDING LIST
+          setLendingList(prev => {
+              const existing = prev.find(l => l.item_id === serviceId);
+              if (existing) {
+                  return prev.map(l => l.item_id === serviceId ? { ...l, quantity: l.quantity + 1 } : l);
+              }
+              return [...prev, {
+                  item_id: service.id,
+                  item_name: service.name,
+                  quantity: 1,
+                  returned: false
+              }];
+          });
+      } else {
+          // ADD TO MINIBAR/SERVICE LIST
+          setUsedServices(prev => {
+              const existing = prev.find(s => s.serviceId === serviceId);
+              if (existing) {
+                  return prev.map(s => s.serviceId === serviceId 
+                      ? { ...s, quantity: s.quantity + 1, total: (s.quantity + 1) * s.price } 
+                      : s
+                  );
+              }
+              return [...prev, {
+                  serviceId: service.id,
+                  name: service.name,
+                  price: service.price,
+                  quantity: 1,
+                  total: service.price,
+                  time: new Date().toISOString()
+              }];
+          });
+      }
   };
 
   const handleUpdateServiceQty = (serviceId: string, delta: number) => {
@@ -425,6 +468,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
               }
               return s;
           }).filter(s => s.quantity > 0);
+      });
+  };
+
+  const handleUpdateLendingQty = (itemId: string, delta: number) => {
+      setLendingList(prev => {
+          return prev.map(l => {
+              if (l.item_id === itemId) {
+                  return { ...l, quantity: Math.max(0, l.quantity + delta) };
+              }
+              return l;
+          }).filter(l => l.quantity > 0);
       });
   };
 
@@ -501,6 +555,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
               setIsSubmitting(true);
               try {
                   await handleInventoryDeduction(usedServices);
+                  await handleLendingDeduction(lendingList); // Handle Lending Stock
 
                   const currentServiceTotal = usedServices.reduce((sum, s) => sum + s.total, 0);
                   const currentRevenue = Number(formData.price || 0) + Number(formData.extraFee || 0) + currentServiceTotal;
@@ -510,7 +565,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                   const updatedBooking: Booking = {
                       ...(formData as Booking),
                       paymentsJson: JSON.stringify(nextPayments),
-                      servicesJson: JSON.stringify(usedServices), 
+                      servicesJson: JSON.stringify(usedServices),
+                      lendingJson: JSON.stringify(lendingList),
                       guestsJson: JSON.stringify(guestList),      
                       totalRevenue: currentRevenue,
                       remainingAmount: currentRemaining
@@ -982,6 +1038,7 @@ If a field is not visible, return empty string "".`;
                     cleaningJson: '{}',
                     assignedCleaner: '',
                     servicesJson: '[]',
+                    lendingJson: '[]',
                     guestsJson: isLeader ? JSON.stringify(guestList) : '[]', 
                     actualCheckIn: undefined,
                     actualCheckOut: undefined,
@@ -1000,6 +1057,7 @@ If a field is not visible, return empty string "".`;
 
         } else {
             await handleInventoryDeduction(usedServices);
+            await handleLendingDeduction(lendingList); // Handle lending deduction
 
             const finalData: Booking = {
               id: booking?.id || `DP${Date.now()}`,
@@ -1023,6 +1081,7 @@ If a field is not visible, return empty string "".`;
               cleaningJson: formData.cleaningJson || '{}',
               assignedCleaner: formData.assignedCleaner || '',
               servicesJson: JSON.stringify(usedServices),
+              lendingJson: JSON.stringify(lendingList),
               guestsJson: JSON.stringify(guestList),
               actualCheckIn: formData.actualCheckIn,
               actualCheckOut: formData.actualCheckOut,
@@ -1071,6 +1130,7 @@ If a field is not visible, return empty string "".`;
 
      try {
          await handleInventoryDeduction(usedServices);
+         await handleLendingDeduction(lendingList);
 
          const updatedBooking: Booking = { 
              ...(formData as Booking), 
@@ -1080,6 +1140,7 @@ If a field is not visible, return empty string "".`;
              remainingAmount: remaining,
              paymentsJson: JSON.stringify(payments),
              servicesJson: JSON.stringify(usedServices),
+             lendingJson: JSON.stringify(lendingList),
              guestsJson: JSON.stringify(guestList)
          };
          
@@ -1099,6 +1160,7 @@ If a field is not visible, return empty string "".`;
      setIsSubmitting(true);
      try {
          await handleInventoryDeduction(usedServices);
+         // Note: Checkout does NOT deduct lending again, it should handle returning items (logic skipped for now per prompt)
 
          const now = new Date();
          const updatedBooking: Booking = { 
@@ -1109,6 +1171,7 @@ If a field is not visible, return empty string "".`;
              remainingAmount: remaining,
              paymentsJson: JSON.stringify(payments),
              servicesJson: JSON.stringify(usedServices),
+             lendingJson: JSON.stringify(lendingList),
              guestsJson: JSON.stringify(guestList)
          };
          
@@ -1324,6 +1387,7 @@ If a field is not visible, return empty string "".`;
               
               {activeTab === 'info' && (
                 <div className="space-y-4 animate-in fade-in duration-300">
+                   {/* ... Info content kept same ... */}
                    {!booking && (
                        <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg w-fit border border-slate-200">
                            <button 
@@ -1505,42 +1569,93 @@ If a field is not visible, return empty string "".`;
               
               {activeTab === 'services' && (
                 <div className="flex flex-col md:flex-row gap-6 md:h-[450px] animate-in slide-in-from-right duration-300">
+                   {/* LEFT: Item Selector */}
                    <div className="flex-1 overflow-y-auto border border-slate-100 rounded-2xl p-4 bg-slate-50 custom-scrollbar max-h-[300px] md:max-h-full">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Danh mục hàng hóa</h4>
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Danh mục hàng hóa & Đồ mượn</h4>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                         {services.map(s => (
-                            <button key={s.id} type="button" onClick={() => handleAddService(s.id)} className="flex flex-col items-center justify-center p-3 bg-white border border-slate-200 rounded-xl hover:border-brand-500 hover:shadow-md transition-all active:scale-95 group">
-                               <span className="font-bold text-xs text-slate-700 line-clamp-1 group-hover:text-brand-600 transition-colors text-center">{s.name}</span>
-                               <span className="text-[10px] text-brand-600 font-black mt-1 uppercase">{s.price.toLocaleString()} Đ</span>
-                            </button>
-                         ))}
+                         {services.map(s => {
+                             const isLending = s.category === 'Linen' || s.category === 'Asset';
+                             return (
+                                <button 
+                                    key={s.id} 
+                                    type="button" 
+                                    onClick={() => handleAddService(s.id)} 
+                                    className={`flex flex-col items-center justify-center p-3 border rounded-xl hover:shadow-md transition-all active:scale-95 group relative ${isLending ? 'bg-blue-50 border-blue-200 hover:border-blue-400' : 'bg-white border-slate-200 hover:border-brand-500'}`}
+                                >
+                                   {isLending && <div className="absolute top-1 right-1 w-2 h-2 bg-blue-500 rounded-full"></div>}
+                                   <span className="font-bold text-xs text-slate-700 line-clamp-1 group-hover:text-brand-600 transition-colors text-center">{s.name}</span>
+                                   <span className={`text-[10px] font-black mt-1 uppercase ${isLending ? 'text-blue-600' : 'text-brand-600'}`}>
+                                       {isLending ? 'Mượn' : `${s.price.toLocaleString()} Đ`}
+                                   </span>
+                                </button>
+                             );
+                         })}
                       </div>
                    </div>
+
+                   {/* RIGHT: Selected Items (Split View) */}
                    <div className="w-full md:w-[320px] flex flex-col gap-4">
-                      <div className="flex-1 overflow-y-auto border border-slate-100 rounded-2xl bg-white shadow-sm custom-scrollbar max-h-[250px] md:max-h-full">
-                         <h4 className="sticky top-0 bg-white/90 backdrop-blur px-4 py-3 border-b text-[10px] font-black text-slate-400 uppercase tracking-widest z-10">Dịch vụ đã chọn</h4>
-                         {usedServices.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-20 text-slate-300 italic text-xs">Chưa có dịch vụ</div>
-                         ) : (
-                            usedServices.map(s => (
-                                <div key={s.serviceId} className="p-3 flex items-center justify-between hover:bg-slate-50 border-b last:border-0 transition-colors">
-                                   <div className="flex-1">
-                                      <div className="font-bold text-xs text-slate-700">{s.name}</div>
-                                      <div className="text-[10px] text-slate-400">{s.price.toLocaleString()} Đ</div>
-                                   </div>
-                                   <div className="flex items-center gap-2">
-                                      <button type="button" onClick={() => handleUpdateServiceQty(s.serviceId, -1)} className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors"><Minus size={14}/></button>
-                                      <span className="font-black text-xs w-6 text-center">{s.quantity}</span>
-                                      <button type="button" onClick={() => handleUpdateServiceQty(s.serviceId, 1)} className="p-1.5 hover:bg-green-50 text-green-500 rounded-lg transition-colors"><Plus size={14}/></button>
-                                   </div>
-                                </div>
-                            ))
-                         )}
+                      
+                      {/* SECTION 1: BILLABLE (Minibar & Service) */}
+                      <div className="flex-1 flex flex-col overflow-hidden border border-slate-100 rounded-2xl bg-white shadow-sm">
+                         <h4 className="px-4 py-2 bg-slate-50 border-b text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                             <span>Minibar & Dịch Vụ (Tính tiền)</span>
+                             <span className="bg-brand-100 text-brand-700 px-1.5 rounded">{usedServices.length}</span>
+                         </h4>
+                         <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
+                             {usedServices.length === 0 ? (
+                                <div className="py-8 text-center text-slate-300 italic text-xs">Chưa có dịch vụ tính phí</div>
+                             ) : (
+                                usedServices.map(s => (
+                                    <div key={s.serviceId} className="p-3 flex items-center justify-between hover:bg-slate-50 border-b last:border-0 transition-colors">
+                                       <div className="flex-1">
+                                          <div className="font-bold text-xs text-slate-700">{s.name}</div>
+                                          <div className="text-[10px] text-slate-400">{s.price.toLocaleString()} Đ</div>
+                                       </div>
+                                       <div className="flex items-center gap-2">
+                                          <button type="button" onClick={() => handleUpdateServiceQty(s.serviceId, -1)} className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"><Minus size={12}/></button>
+                                          <span className="font-black text-xs w-5 text-center">{s.quantity}</span>
+                                          <button type="button" onClick={() => handleUpdateServiceQty(s.serviceId, 1)} className="p-1 hover:bg-green-50 text-green-500 rounded transition-colors"><Plus size={12}/></button>
+                                       </div>
+                                    </div>
+                                ))
+                             )}
+                         </div>
+                         <div className="p-3 bg-slate-100 border-t flex justify-between items-center">
+                             <span className="text-[10px] font-bold text-slate-500 uppercase">Tổng cộng:</span>
+                             <span className="font-black text-sm text-brand-600">{serviceTotal.toLocaleString()} ₫</span>
+                         </div>
                       </div>
-                      <div className="p-4 bg-brand-600 rounded-2xl shadow-lg shadow-brand-100 flex justify-between items-center text-white">
-                         <span className="text-xs font-bold uppercase tracking-widest opacity-80">Tổng cộng:</span>
-                         <span className="font-black text-lg">{serviceTotal.toLocaleString()} ₫</span>
+
+                      {/* SECTION 2: LENDING (Linen & Asset) */}
+                      <div className="flex-1 flex flex-col overflow-hidden border border-blue-100 rounded-2xl bg-white shadow-sm ring-1 ring-blue-50">
+                         <h4 className="px-4 py-2 bg-blue-50 border-b border-blue-100 text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center justify-between">
+                             <span>Đồ Cho Mượn (Miễn phí)</span>
+                             <span className="bg-white text-blue-600 px-1.5 rounded shadow-sm">{lendingList.length}</span>
+                         </h4>
+                         <div className="flex-1 overflow-y-auto custom-scrollbar p-0">
+                             {lendingList.length === 0 ? (
+                                <div className="py-8 text-center text-slate-300 italic text-xs">Chưa mượn đồ gì</div>
+                             ) : (
+                                lendingList.map(l => (
+                                    <div key={l.item_id} className="p-3 flex items-center justify-between hover:bg-blue-50/50 border-b border-blue-50 last:border-0 transition-colors">
+                                       <div className="flex-1">
+                                          <div className="font-bold text-xs text-slate-700 flex items-center gap-1">
+                                              <Shirt size={12} className="text-blue-400"/> {l.item_name}
+                                          </div>
+                                          <div className="text-[9px] text-slate-400 italic">Kho sạch &rarr; Đang dùng</div>
+                                       </div>
+                                       <div className="flex items-center gap-2">
+                                          <button type="button" onClick={() => handleUpdateLendingQty(l.item_id, -1)} className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"><Minus size={12}/></button>
+                                          <span className="font-black text-xs w-5 text-center text-blue-700">{l.quantity}</span>
+                                          <button type="button" onClick={() => handleUpdateLendingQty(l.item_id, 1)} className="p-1 hover:bg-green-50 text-green-500 rounded transition-colors"><Plus size={12}/></button>
+                                       </div>
+                                    </div>
+                                ))
+                             )}
+                         </div>
                       </div>
+
                    </div>
                 </div>
               )}
@@ -1559,6 +1674,7 @@ If a field is not visible, return empty string "".`;
                        </div>
                        {displayRemaining > 0 && <button type="button" onClick={handleQuickPayAll} className="w-full sm:w-auto px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-rose-700 transition-all active:scale-95 uppercase tracking-widest">Thu nhanh</button>}
                     </div>
+                    {/* ... (Rest of Payment UI same as before) ... */}
                     <div className="flex flex-col md:flex-row gap-6">
                         {/* History */}
                         {!isGroupPaymentMode && (
@@ -1612,6 +1728,7 @@ If a field is not visible, return empty string "".`;
                  </div>
               )}
 
+              {/* ... (OCR Tab kept same) ... */}
               {activeTab === 'ocr' && (
                  <div className="space-y-6 animate-in slide-in-from-right duration-300">
                      <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-blue-100 p-6 rounded-2xl">

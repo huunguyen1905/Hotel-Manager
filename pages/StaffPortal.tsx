@@ -5,10 +5,10 @@ import { useNavigate } from 'react-router-dom';
 import { 
   LogOut, CheckCircle, Clock, MapPin, 
   ChevronRight, CheckSquare, Square, 
-  ArrowLeft, ListChecks, Info, Shirt, Loader2, Beer, Package, Plus, Minus, RefreshCw
+  ArrowLeft, ListChecks, Info, Shirt, Loader2, Beer, Package, Plus, Minus, RefreshCw, ArchiveRestore
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
-import { HousekeepingTask, ChecklistItem, RoomRecipeItem, ServiceItem } from '../types';
+import { HousekeepingTask, ChecklistItem, RoomRecipeItem, ServiceItem, LendingItem } from '../types';
 import { storageService } from '../services/storage';
 import { ROOM_RECIPES } from '../constants';
 
@@ -27,9 +27,9 @@ const PlayIcon = ({ size = 20, fill = "currentColor", className = "" }) => (
 
 export const StaffPortal: React.FC = () => {
   const { 
-    facilities, rooms, housekeepingTasks, syncHousekeepingTasks, services,
+    facilities, rooms, housekeepingTasks, syncHousekeepingTasks, services, bookings,
     currentUser, setCurrentUser, notify, upsertRoom, 
-    refreshData, isLoading, handleLinenExchange, processMinibarUsage
+    refreshData, isLoading, handleLinenExchange, processMinibarUsage, processCheckoutLinenReturn
   } = useAppContext();
   
   const [activeTask, setActiveTask] = useState<(HousekeepingTask & { facilityName: string, roomType?: string }) | null>(null);
@@ -150,6 +150,57 @@ export const StaffPortal: React.FC = () => {
       });
   }, [activeTask, services]);
 
+  // --- LOGIC LẤY DANH SÁCH THU HỒI (RECIPE + LENDING) ---
+  const checkoutReturnList = useMemo(() => {
+      if (!activeTask || activeTask.task_type !== 'Checkout') return [];
+      
+      const combinedMap = new Map<string, { name: string, qty: number, isExtra: boolean }>();
+
+      // 1. Add Recipe Items (Standard)
+      recipeItems.forEach(item => {
+          if (item.category === 'Linen' || item.category === 'Asset') {
+              const id = item.id || item.fallbackName;
+              combinedMap.set(id, {
+                  name: item.name || item.fallbackName,
+                  qty: item.requiredQty,
+                  isExtra: false
+              });
+          }
+      });
+
+      // 2. Add Extra Lending Items from Booking
+      // Find latest booking for this room that is CheckedOut today or CheckedIn
+      const today = new Date();
+      const booking = bookings.find(b => 
+          b.facilityName === activeTask.facilityName && 
+          b.roomCode === activeTask.room_code && 
+          (b.status === 'CheckedIn' || (b.status === 'CheckedOut' && parseISO(b.checkoutDate).toDateString() === today.toDateString()))
+      );
+
+      if (booking && booking.lendingJson) {
+          try {
+              const lends: LendingItem[] = JSON.parse(booking.lendingJson);
+              lends.forEach(l => {
+                  if (l.quantity > 0) {
+                      const existing = combinedMap.get(l.item_id);
+                      if (existing) {
+                          existing.qty += l.quantity;
+                          existing.isExtra = true; // Mark as having extra
+                      } else {
+                          combinedMap.set(l.item_id, {
+                              name: l.item_name,
+                              qty: l.quantity,
+                              isExtra: true
+                          });
+                      }
+                  }
+              });
+          } catch(e) {}
+      }
+
+      return Array.from(combinedMap.values());
+  }, [activeTask, recipeItems, bookings]);
+
   const openTaskDetail = (task: typeof myTasks[0]) => {
       if (task.status === 'Done') return;
       setActiveTask(task);
@@ -216,22 +267,18 @@ export const StaffPortal: React.FC = () => {
         
         await processMinibarUsage(activeTask.facilityName, activeTask.room_code, itemsToProcess);
 
-        // 2. Process Linen Exchange (Tự động dựa trên công thức nếu là Checkout)
-        // Nếu Checkout: Mặc định thay toàn bộ đồ vải theo recipe
-        let linenCount = 0;
+        // 2. Process Linen Exchange / Return
+        let linenNote = '';
         if (activeTask.task_type === 'Checkout') {
-            // Đếm tổng số đồ vải trong recipe
-            linenCount = recipeItems
-                .filter(i => i.category === 'Linen')
-                .reduce((sum, i) => sum + i.requiredQty, 0);
+            // CHECKOUT: AUTO RETURN ALL (Recipe + Extra)
+            const returnItems = checkoutReturnList.map(i => ({ itemId: i.name, qty: i.qty }));
+            if (returnItems.length > 0) {
+                await processCheckoutLinenReturn(activeTask.facilityName, activeTask.room_code, returnItems);
+                linenNote = ` (Thu hồi: ${returnItems.length} loại đồ vải)`;
+            }
         } else {
-            // Nếu Stayover: Chỉ tính những cái user nhập vào là "Consumed" (đã thay) ?? 
-            // Thực tế: User nên nhập số lượng đồ bẩn thu về.
-            // Ở đây tạm dùng logic đơn giản: Consumed Linen = Dirty Linen
-            linenCount = itemsToProcess.reduce((sum, i) => {
-                const s = services.find(s => s.id === i.itemId);
-                return s?.category === 'Linen' ? sum + i.qty : sum;
-            }, 0);
+            // STAYOVER: Record consumption only (Manual input assumed for now)
+            // TODO: Enhance stayover exchange logic if needed
         }
         
         // 3. Update Task Status
@@ -240,20 +287,18 @@ export const StaffPortal: React.FC = () => {
             status: 'Done',
             checklist: JSON.stringify(localChecklist),
             completed_at: new Date().toISOString(),
-            linen_exchanged: linenCount,
-            note: activeTask.note + (itemsToProcess.length > 0 ? ` (Used: ${itemsToProcess.length} items)` : '')
+            // For checkout, we assume all gathered. For others, count input.
+            linen_exchanged: activeTask.task_type === 'Checkout' ? checkoutReturnList.reduce((sum, i) => sum + i.qty, 0) : 0,
+            note: (activeTask.note || '') + linenNote
         };
 
-        if (linenCount > 0) {
-            await handleLinenExchange(updatedTask, linenCount);
-        }
         await syncHousekeepingTasks([updatedTask]);
 
         // 4. Update Room Status
         const roomObj = rooms.find(r => r.facility_id === activeTask.facility_id && r.name === activeTask.room_code);
         if (roomObj) {
             await upsertRoom({ ...roomObj, status: 'Đã dọn' });
-            notify('success', `Hoàn thành P.${activeTask.room_code}. Đã báo phí & trừ kho!`);
+            notify('success', `Hoàn thành P.${activeTask.room_code}. Kho & Phí đã cập nhật!`);
         }
         
         setActiveTask(null);
@@ -420,15 +465,30 @@ export const StaffPortal: React.FC = () => {
                             <div className="h-px bg-slate-100 my-4"></div>
 
                             <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-2 mb-4">
-                                <Shirt size={18} className="text-blue-500"/> 3. Thu hồi Đồ vải (Linen)
+                                <ArchiveRestore size={18} className="text-blue-500"/> 3. Thu hồi Đồ vải (Linen)
                             </h3>
                             {activeTask.task_type === 'Checkout' ? (
-                                <div className="bg-blue-50 p-4 rounded-xl text-blue-800 text-xs font-bold border border-blue-100 flex items-center gap-2">
-                                    <Info size={16}/> Hệ thống sẽ tự động thu hồi toàn bộ đồ vải theo công thức phòng về kho bẩn. Bạn chỉ cần gom đồ.
+                                <div className="space-y-3">
+                                    <div className="bg-blue-50 p-4 rounded-xl text-blue-800 text-xs font-bold border border-blue-100 flex items-center gap-2 mb-2">
+                                        <Info size={16}/> Hệ thống tự động liệt kê số lượng cần thu hồi (Gồm đồ chuẩn + đồ khách mượn thêm). Hãy kiểm đếm đủ và gom về kho bẩn.
+                                    </div>
+                                    {checkoutReturnList.map((item, idx) => (
+                                        <div key={idx} className="flex items-center justify-between bg-white p-3 rounded-xl border border-blue-100 shadow-sm">
+                                            <div className="flex items-center gap-3">
+                                                <Shirt size={20} className="text-blue-400"/>
+                                                <div>
+                                                    <div className="font-bold text-slate-700 text-sm">{item.name}</div>
+                                                    {item.isExtra && <span className="text-[9px] text-purple-600 font-bold bg-purple-50 px-1 rounded">Có đồ mượn thêm</span>}
+                                                </div>
+                                            </div>
+                                            <div className="font-black text-lg text-blue-600">{item.qty}</div>
+                                        </div>
+                                    ))}
+                                    {checkoutReturnList.length === 0 && <div className="text-center text-xs text-slate-400 italic">Không có đồ vải cần thu hồi.</div>}
                                 </div>
                             ) : (
                                 <div className="space-y-3">
-                                    <p className="text-[10px] text-slate-400 mb-2 italic">Nhập số lượng đồ bẩn bạn mang ra khỏi phòng.</p>
+                                    <p className="text-[10px] text-slate-400 mb-2 italic">Stayover: Nhập số lượng đồ bẩn bạn mang ra khỏi phòng (để đổi sạch).</p>
                                     {recipeItems.filter(i => i.category === 'Linen').map((item, idx) => {
                                         const consumed = consumedItems[item.id || item.fallbackName] || 0;
                                         return (

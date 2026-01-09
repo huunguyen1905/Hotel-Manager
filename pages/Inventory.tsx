@@ -50,6 +50,7 @@ export const Inventory: React.FC = () => {
       minStock: 5,
       category: 'Minibar',
       laundryStock: 0,
+      in_circulation: 0,
       totalassets: 0,
       default_qty: 0
   });
@@ -90,25 +91,17 @@ export const Inventory: React.FC = () => {
     });
   }, [inventoryTransactions, searchTerm, historyDate, historyRoom]);
 
-  // 2. Tính toán "Đang sử dụng" (In Use)
-  const inUseLinenCount = useMemo(() => {
-    const map: Record<string, number> = {};
-    const activeBookings = bookings.filter(b => b.status === 'CheckedIn');
-    
-    services.forEach(s => {
-        if (s.category === 'Linen' || s.category === 'Asset') {
-            const qtyPerRoom = s.default_qty || 0;
-            // Số lượng đang dùng = Số phòng đang có khách * Định mức
-            map[s.id] = activeBookings.length * qtyPerRoom;
-        }
-    });
-    return { map, activeRoomCount: activeBookings.length };
-  }, [bookings, services]);
-
   // 4. KPI Tổng quan & Analytics
   const stats = useMemo(() => {
-      // Basic Stats
-      const totalInventoryValue = services.reduce((sum, s) => sum + ((Number(s.stock) || 0) * (Number(s.costPrice) || 0)), 0);
+      // Basic Stats: Tính tổng giá trị dựa trên TỔNG TÀI SẢN (Sạch + Bẩn + Đang Dùng) thay vì chỉ Kho Sạch
+      const totalInventoryValue = services.reduce((sum, s) => {
+          // Ưu tiên dùng trường totalassets nếu có, nếu không thì cộng dồn các kho
+          const totalQty = Number(s.totalassets) > 0 
+              ? Number(s.totalassets) 
+              : (Number(s.stock) || 0) + (Number(s.laundryStock) || 0) + (Number(s.in_circulation) || 0);
+          
+          return sum + (totalQty * (Number(s.costPrice) || 0));
+      }, 0);
       
       // Low Stock Logic
       const lowStockList = services.filter(s => (s.stock || 0) <= (s.minStock || 0) && s.category !== 'Service');
@@ -118,15 +111,18 @@ export const Inventory: React.FC = () => {
       const categoryValue: Record<string, number> = {};
       services.forEach(s => {
           if(s.category === 'Service') return;
-          const val = (Number(s.stock) || 0) * (Number(s.costPrice) || 0);
+          const totalQty = Number(s.totalassets) > 0 
+              ? Number(s.totalassets) 
+              : (Number(s.stock) || 0) + (Number(s.laundryStock) || 0) + (Number(s.in_circulation) || 0);
+          const val = totalQty * (Number(s.costPrice) || 0);
           categoryValue[s.category] = (categoryValue[s.category] || 0) + val;
       });
 
-      // Linen Cycle Stats
+      // Linen Cycle Stats (Based on DB Fields)
       const linenItems = services.filter(s => s.category === 'Linen');
       const totalLinenClean = linenItems.reduce((sum, s) => sum + (Number(s.stock) || 0), 0);
       const totalLinenDirty = linenItems.reduce((sum, s) => sum + (Number(s.laundryStock) || 0), 0);
-      const totalLinenInUse = linenItems.reduce((sum, s) => sum + (inUseLinenCount.map[s.id] || 0), 0);
+      const totalLinenInUse = linenItems.reduce((sum, s) => sum + (Number(s.in_circulation) || 0), 0);
       const totalLinenAssets = totalLinenClean + totalLinenDirty + totalLinenInUse;
 
       return { 
@@ -136,7 +132,7 @@ export const Inventory: React.FC = () => {
           categoryValue,
           linenStats: { clean: totalLinenClean, dirty: totalLinenDirty, inUse: totalLinenInUse, total: totalLinenAssets }
       };
-  }, [services, inUseLinenCount]);
+  }, [services]);
 
   const openTransaction = (item: ServiceItem, mode: 'Purchase' | 'SendLaundry' | 'ReceiveLaundry' | 'Liquidate') => {
     setSelectedItem(item);
@@ -189,7 +185,7 @@ export const Inventory: React.FC = () => {
             }
         } 
         else if (modalMode === 'SendLaundry') {
-            // GỬI GIẶT
+            // GỬI GIẶT: Stock (Clean) -> Laundry (Dirty)
             transType = 'LAUNDRY_SEND';
             if((Number(newItem.stock) || 0) < actionQty) {
                 notify('error', 'Không đủ tồn kho sạch để gửi giặt');
@@ -200,7 +196,7 @@ export const Inventory: React.FC = () => {
             newItem.laundryStock = (Number(newItem.laundryStock) || 0) + actionQty;
         } 
         else if (modalMode === 'ReceiveLaundry') {
-            // NHẬN GIẶT
+            // NHẬN GIẶT: Laundry (Dirty) -> Stock (Clean)
             transType = 'LAUNDRY_RECEIVE';
             if((Number(newItem.laundryStock) || 0) < actionQty) {
                 notify('error', 'Số lượng nhận vượt quá số lượng đang giặt');
@@ -213,6 +209,7 @@ export const Inventory: React.FC = () => {
             newItem.stock = (Number(newItem.stock) || 0) + actualReturn;
 
             if (damageQty > 0) {
+                // Nếu có hỏng, giảm tổng tài sản
                 newItem.totalassets = (Number(newItem.totalassets) || 0) - damageQty;
             }
         }
@@ -281,6 +278,7 @@ export const Inventory: React.FC = () => {
                  minStock: Number(editForm.minStock ?? 0),
                  category: editForm.category ?? 'Service',
                  laundryStock: Number(editForm.laundryStock ?? 0),
+                 in_circulation: Number(editForm.in_circulation ?? 0),
                  totalassets: Number(editForm.totalassets ?? 0), 
                  default_qty: Number(editForm.default_qty ?? 0)
              };
@@ -307,6 +305,7 @@ export const Inventory: React.FC = () => {
                   id: `S${Date.now()}`,
                   totalassets: newServiceForm.stock || 0,
                   laundryStock: 0,
+                  in_circulation: 0,
                   default_qty: newServiceForm.default_qty || 0
               };
               await addService(item);
@@ -345,9 +344,9 @@ export const Inventory: React.FC = () => {
               <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-2xl shadow-lg text-white relative overflow-hidden">
                   <div className="absolute right-0 top-0 p-4 opacity-10"><DollarSign size={80}/></div>
                   <div className="relative z-10">
-                      <div className="flex items-center gap-2 text-emerald-100 mb-2 font-bold text-xs uppercase tracking-widest"><TrendingUp size={16}/> Giá trị kho hiện tại</div>
+                      <div className="flex items-center gap-2 text-emerald-100 mb-2 font-bold text-xs uppercase tracking-widest"><TrendingUp size={16}/> Tổng giá trị tài sản</div>
                       <div className="text-3xl font-black">{stats.totalInventoryValue.toLocaleString()} ₫</div>
-                      <p className="text-xs text-emerald-100 mt-2 opacity-80">Tổng giá vốn của toàn bộ hàng hóa & tài sản đang có trong kho.</p>
+                      <p className="text-xs text-emerald-100 mt-2 opacity-80">Tổng giá vốn (Kho sạch + Đang dùng + Đang giặt).</p>
                   </div>
               </div>
 
@@ -451,7 +450,7 @@ export const Inventory: React.FC = () => {
                       })}
                   </div>
                   <div className="mt-4 pt-4 border-t border-slate-50 text-[10px] text-slate-400 italic text-center">
-                      * Dựa trên Giá vốn (Cost Price) x Tồn kho thực tế
+                      * Dựa trên Giá vốn (Cost Price) x Tổng tài sản (Sạch+Bẩn+Dùng)
                   </div>
               </div>
           </div>
@@ -641,9 +640,9 @@ export const Inventory: React.FC = () => {
                         {activeTab === 'Linen' ? (
                             <tr>
                                 <th className="p-5">Tên Đồ Vải / Tài Sản</th>
-                                <th className="p-5 text-center bg-blue-50/50 text-blue-700">Đang Dùng (Có Khách)</th>
-                                <th className="p-5 text-center bg-emerald-50/50 text-emerald-700">Kho Sạch (Kho + Phòng Trống)</th>
-                                <th className="p-5 text-center bg-rose-50/50 text-rose-700">Đang Giặt (Bẩn)</th>
+                                <th className="p-5 text-center bg-blue-50/50 text-blue-700">Đang Dùng (In Circulation)</th>
+                                <th className="p-5 text-center bg-emerald-50/50 text-emerald-700">Kho Sạch (Stock)</th>
+                                <th className="p-5 text-center bg-rose-50/50 text-rose-700">Đang Giặt (Laundry)</th>
                                 <th className="p-5 text-center font-black text-slate-800">
                                     <div className="flex items-center justify-center gap-1">
                                         Tổng Thực Tế
@@ -680,7 +679,7 @@ export const Inventory: React.FC = () => {
                             const isLow = (item.stock || 0) <= (item.minStock || 0) && item.category !== 'Service';
                             
                             // Logic Tổng Kho cho Linen/Asset
-                            const inRoom = inUseLinenCount.map[item.id] || 0;
+                            const inRoom = Number(item.in_circulation) || 0; // Use direct DB value for consistency
                             const currentTotalCycle = (Number(item.stock) || 0) + (Number(item.laundryStock) || 0) + inRoom;
                             const recordedTotal = Number(item.totalassets) || 0;
                             const variance = currentTotalCycle - recordedTotal; // Thực tế - Sổ sách
@@ -693,9 +692,9 @@ export const Inventory: React.FC = () => {
                                         <div className="text-[9px] text-slate-400 mt-1">Định mức: <b className="text-slate-600">{item.default_qty || 0}</b>/phòng</div>
                                     </td>
                                     <td className="p-5 text-center bg-blue-50/20">
-                                        <div className="flex flex-col items-center" title={`${item.default_qty} x ${inUseLinenCount.activeRoomCount} phòng có khách`}>
+                                        <div className="flex flex-col items-center">
                                             <span className="text-blue-700 font-bold text-base">{inRoom}</span>
-                                            <span className="text-[9px] text-blue-400 font-black uppercase mt-1">{inUseLinenCount.activeRoomCount} phòng đang ở</span>
+                                            <span className="text-[9px] text-blue-400 font-black uppercase mt-1">Trong phòng</span>
                                         </div>
                                     </td>
                                     <td className="p-5 text-center bg-emerald-50/20">
@@ -709,7 +708,7 @@ export const Inventory: React.FC = () => {
                                             <span className="text-rose-700 font-black text-base">{item.laundryStock || 0}</span>
                                             {item.laundryStock! > 0 && (
                                                 <button onClick={() => openTransaction(item, 'ReceiveLaundry')} className="text-[9px] font-black text-rose-500 hover:underline flex items-center gap-0.5 mt-1 bg-white px-2 py-1 rounded shadow-sm border border-rose-100 hover:bg-rose-50">
-                                                    <ArrowDownCircle size={10}/> NHẬN SẠCH
+                                                    <ArrowDownCircle size={10}/> NHẬP GIẶT
                                                 </button>
                                             )}
                                         </div>
@@ -812,7 +811,7 @@ export const Inventory: React.FC = () => {
                                    <div className="grid grid-cols-3 gap-2 text-center text-xs mb-4">
                                        <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-100">
                                            <div className="text-blue-600 font-bold mb-1">Dùng</div>
-                                           <div className="font-black text-lg text-blue-700">{inUseLinenCount.map[item.id] || 0}</div>
+                                           <div className="font-black text-lg text-blue-700">{item.in_circulation || 0}</div>
                                        </div>
                                        <div className="bg-emerald-50 p-2.5 rounded-lg border border-emerald-100">
                                            <div className="text-emerald-600 font-bold mb-1">Sạch</div>
@@ -865,8 +864,8 @@ export const Inventory: React.FC = () => {
       <Modal isOpen={isTransModalOpen} onClose={() => setTransModalOpen(false)} 
         title={
             modalMode === 'Purchase' ? 'Nhập Hàng / Tăng Tài Sản' : 
-            modalMode === 'SendLaundry' ? 'Gửi Đồ Đi Giặt' : 
-            modalMode === 'ReceiveLaundry' ? 'Nhận Đồ Sạch Từ Xưởng' : 'Thanh Lý / Hủy Hàng'
+            modalMode === 'SendLaundry' ? 'Gửi Đồ Đi Giặt (Sạch -> Bẩn)' : 
+            modalMode === 'ReceiveLaundry' ? 'Nhận Đồ Sạch (Bẩn -> Sạch)' : 'Thanh Lý / Hủy Hàng'
         } 
         size="md"
       >
@@ -1064,6 +1063,25 @@ export const Inventory: React.FC = () => {
                           value={editForm.laundryStock ?? 0} 
                           onChange={e => setEditForm({...editForm, laundryStock: Number(e.target.value)})} 
                           disabled={editForm.category !== 'Linen'}
+                      />
+                  </div>
+                  <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trong phòng (In Circulation)</label>
+                      <input 
+                          type="number" 
+                          className="w-full border-2 border-slate-100 rounded-xl p-3 bg-white font-black text-slate-800 outline-none focus:border-brand-500" 
+                          value={editForm.in_circulation ?? 0} 
+                          onChange={e => setEditForm({...editForm, in_circulation: Number(e.target.value)})} 
+                          disabled={editForm.category !== 'Linen' && editForm.category !== 'Asset'}
+                      />
+                  </div>
+                  <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Giá Vốn (Cost Price)</label>
+                      <input 
+                          type="number" 
+                          className="w-full border-2 border-slate-100 rounded-xl p-3 bg-white font-black text-slate-800 outline-none focus:border-brand-500" 
+                          value={editForm.costPrice ?? 0} 
+                          onChange={e => setEditForm({...editForm, costPrice: Number(e.target.value)})} 
                       />
                   </div>
               </div>

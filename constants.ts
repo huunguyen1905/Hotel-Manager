@@ -21,12 +21,12 @@ export const DEFAULT_SETTINGS: Settings = {
 // Cấu hình danh mục vật tư chuẩn theo yêu cầu khách sạn
 export const MOCK_SERVICES: ServiceItem[] = [
     // --- LINEN & ASSET (Đồ vải & Tài sản quay vòng) ---
-    { id: 'L_GA18', name: 'Ga Trải 1m8', price: 200000, costPrice: 150000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, totalassets: 150 },
-    { id: 'L_BOC18', name: 'Vỏ Bọc 1m8', price: 250000, costPrice: 180000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, totalassets: 150 },
-    { id: 'L_GA12', name: 'Ga Trải 1m2', price: 150000, costPrice: 100000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, totalassets: 150 },
-    { id: 'L_BOC12', name: 'Vỏ Bọc 1m2', price: 180000, costPrice: 120000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, totalassets: 150 },
-    { id: 'L_GOI', name: 'Vỏ Gối', price: 50000, costPrice: 30000, unit: 'Cái', stock: 200, minStock: 20, category: 'Linen', laundryStock: 0, totalassets: 500 },
-    { id: 'L_AO', name: 'Áo Tắm', price: 200000, costPrice: 150000, unit: 'Cái', stock: 100, minStock: 10, category: 'Linen', laundryStock: 0, totalassets: 300 },
+    { id: 'L_GA18', name: 'Ga Trải 1m8', price: 200000, costPrice: 150000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, in_circulation: 0, totalassets: 150 },
+    { id: 'L_BOC18', name: 'Vỏ Bọc 1m8', price: 250000, costPrice: 180000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, in_circulation: 0, totalassets: 150 },
+    { id: 'L_GA12', name: 'Ga Trải 1m2', price: 150000, costPrice: 100000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, in_circulation: 0, totalassets: 150 },
+    { id: 'L_BOC12', name: 'Vỏ Bọc 1m2', price: 180000, costPrice: 120000, unit: 'Cái', stock: 50, minStock: 10, category: 'Linen', laundryStock: 0, in_circulation: 0, totalassets: 150 },
+    { id: 'L_GOI', name: 'Vỏ Gối', price: 50000, costPrice: 30000, unit: 'Cái', stock: 200, minStock: 20, category: 'Linen', laundryStock: 0, in_circulation: 0, totalassets: 500 },
+    { id: 'L_AO', name: 'Áo Tắm', price: 200000, costPrice: 150000, unit: 'Cái', stock: 100, minStock: 10, category: 'Linen', laundryStock: 0, in_circulation: 0, totalassets: 300 },
     
     // --- AMENITIES (Tiêu hao miễn phí) ---
     { id: 'A_BANCHAI', name: 'Bàn Chải', price: 5000, costPrice: 2000, unit: 'Cái', stock: 500, minStock: 50, category: 'Amenity', totalassets: 500 },
@@ -353,6 +353,7 @@ const generateBookings = (): Booking[] => {
       cleaningJson: '{}',
       assignedCleaner: '',
       servicesJson: '[]',
+      lendingJson: '[]', // New field init
       actualCheckIn: status === 'CheckedIn' ? checkinDate.toISOString() : undefined
     });
   }

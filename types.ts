@@ -115,6 +115,7 @@ export interface ServiceItem {
   minStock: number; 
   category: ItemCategory; 
   laundryStock?: number; // Kho Bẩn: Đang chờ giặt/tại xưởng
+  in_circulation?: number; // Đang trong phòng (Theo định mức hoặc khách mượn)
   totalassets?: number; // Tổng tài sản (Sạch + Bẩn + Đang trong phòng)
   default_qty?: number; // Định mức chuẩn cho mỗi phòng (vd: 2 khăn/phòng)
   created_at?: string;
@@ -138,6 +139,14 @@ export interface ServiceUsage {
   quantity: number;
   total: number;
   time: string;
+}
+
+// Interface cho đồ khách mượn thêm (Lending)
+export interface LendingItem {
+  item_id: string;
+  item_name: string;
+  quantity: number;
+  returned: boolean;
 }
 
 // Interface chi tiết cho từng khách trong phòng
@@ -176,7 +185,8 @@ export interface Booking {
   remainingAmount: number;
   cleaningJson: string; 
   assignedCleaner?: string; 
-  servicesJson?: string;
+  servicesJson?: string; // Đồ khách mua/tiêu hao (Minibar)
+  lendingJson?: string; // Đồ khách mượn (LendingItem[])
   guestsJson?: string; // Lưu danh sách Guest[]
   isDeclared?: boolean; // New field: Đã khai báo lưu trú hay chưa
   

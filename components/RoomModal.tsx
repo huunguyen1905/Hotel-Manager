@@ -1,9 +1,9 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Modal } from './Modal';
 import { Room } from '../types';
-import { Maximize2, Mountain, Star, Tag } from 'lucide-react';
-import { ROOM_RECIPES } from '../constants';
+import { useAppContext } from '../context/AppContext';
+import { Maximize2, Mountain, Star, Tag, Info, Package } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -13,6 +13,7 @@ interface Props {
 }
 
 export const RoomModal: React.FC<Props> = ({ isOpen, onClose, roomData, onSave }) => {
+  const { roomRecipes, services } = useAppContext();
   const [form, setForm] = useState<Partial<Room>>({
     name: '',
     status: 'Đã dọn',
@@ -24,7 +25,7 @@ export const RoomModal: React.FC<Props> = ({ isOpen, onClose, roomData, onSave }
     area: 35
   });
 
-  const roomTypes = Object.keys(ROOM_RECIPES);
+  const roomTypes = useMemo(() => Object.keys(roomRecipes), [roomRecipes]);
 
   useEffect(() => {
     if (roomData) {
@@ -56,6 +57,10 @@ export const RoomModal: React.FC<Props> = ({ isOpen, onClose, roomData, onSave }
        onClose();
     }
   };
+
+  const currentRecipe = useMemo(() => {
+      return form.type ? roomRecipes[form.type] : null;
+  }, [form.type, roomRecipes]);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Chi Tiết & Cấu Hình Phòng" size="md">
@@ -115,12 +120,12 @@ export const RoomModal: React.FC<Props> = ({ isOpen, onClose, roomData, onSave }
 
         {/* Advanced Room Attributes */}
         <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2 mb-2">Đặc điểm phòng (Ảnh hưởng Kho)</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 pb-2 mb-2">Đặc điểm phòng & Công thức</h4>
             
             <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                     <label className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        <Star size={12}/> Loại phòng (Công thức)
+                        <Star size={12}/> Loại phòng (Recipes)
                     </label>
                     <select 
                         className="w-full border border-slate-200 rounded-lg p-2.5 bg-white text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-brand-500"
@@ -128,7 +133,7 @@ export const RoomModal: React.FC<Props> = ({ isOpen, onClose, roomData, onSave }
                         onChange={e => setForm({...form, type: e.target.value})}
                     >
                         {roomTypes.map(t => (
-                            <option key={t} value={t}>{t} ({ROOM_RECIPES[t].description})</option>
+                            <option key={t} value={t}>{t} ({roomRecipes[t].description})</option>
                         ))}
                     </select>
                 </div>
@@ -162,6 +167,32 @@ export const RoomModal: React.FC<Props> = ({ isOpen, onClose, roomData, onSave }
                     <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400">m²</span>
                 </div>
             </div>
+
+            {/* Recipe Preview Box */}
+            {currentRecipe && (
+                <div className="bg-white p-3 rounded-lg border border-brand-100 mt-2">
+                    <div className="flex items-center gap-2 mb-2 text-brand-600">
+                        <Package size={14}/>
+                        <span className="text-[10px] font-black uppercase">Định mức áp dụng ({currentRecipe.items.length} món)</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {currentRecipe.items.slice(0, 6).map((item, idx) => {
+                            // Find actual name from services if possible
+                            const serviceName = services.find(s => s.id === item.itemId)?.name || item.itemId;
+                            return (
+                                <span key={idx} className="text-[9px] bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 font-medium">
+                                    {serviceName} <b>x{item.quantity}</b>
+                                </span>
+                            );
+                        })}
+                        {currentRecipe.items.length > 6 && (
+                            <span className="text-[9px] text-slate-400 italic font-medium">
+                                +{currentRecipe.items.length - 6} món khác...
+                            </span>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
 
         <div>
