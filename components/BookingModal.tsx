@@ -40,7 +40,7 @@ const DEFAULT_OCR_DATA: ResidenceData = {
     ho_ten: '', 
     ngay_sinh: '', 
     gioi_tinh: '', 
-    quoc_tich: 'Việt Nam',
+    quoc_tich: 'VNM',
     so_giay_to: '', 
     loai_giay_to: 'CCCD', 
     so_dien_thoai: '',
@@ -49,7 +49,7 @@ const DEFAULT_OCR_DATA: ResidenceData = {
     phuong_xa: '', 
     dia_chi_chitiet: '',
     ly_do: 'Du lịch', 
-    loai_cu_tru: 'Lưu trú ngắn hạn'
+    loai_cu_tru: 'Lưu trú'
 };
 
 const INITIAL_BOOKING_STATE: Partial<Booking> = {
@@ -217,7 +217,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
       return bookings.find(b => b.id === formData.id) || booking;
   };
 
-  // ... (Code for Sheet Logic Omitted for brevity, kept same) ...
   // --- SHEET IMPORT LOGIC ---
   const fetchSheetData = async () => {
       // 1. Kiểm tra cấu hình webhook 'ota_import'
@@ -656,7 +655,49 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
           const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
           const mimeType = base64Image.includes(';') ? base64Image.split(';')[0].split(':')[1] : 'image/jpeg';
 
-          const prompt = "Extract information from this Vietnamese Identity Card (CCCD) or Passport.\nReturn ONLY a raw valid JSON object. Do not wrap in markdown or code blocks.\n\nFields required:\n- ho_ten: Full Name (Uppercase)\n- ngay_sinh: DD/MM/YYYY\n- gioi_tinh: Nam or Nữ\n- quoc_tich: Country (default Việt Nam)\n- so_giay_to: ID Number\n- loai_giay_to: \"CCCD\" or \"Passport\"\n- tinh_tp: Extract City/Province from address\n- quan_huyen: Extract District from address\n- phuong_xa: Extract Ward from address\n- dia_chi_chitiet: Street name, house number, village, or hamlet - excluding admin units\n\nIf a field is not found/visible, use empty string \"\".";
+          // UPDATED PROMPT WITH LOGIC BRANCHING
+          const prompt = `Role: You are an expert OCR and Data Extraction AI specialized in Identity Documents (ID Cards, Passports).
+
+Task: Extract information from the provided image and format it into a specific JSON structure based on the Nationality.
+
+Rules:
+1. Detect the Nationality (ISO 3-letter code, e.g., VNM, USA, KOR, CHN).
+2. OUTPUT ONLY RAW JSON. No Markdown, no code blocks, no explanations.
+
+LOGIC BRANCHING:
+
+--- CASE 1: IF NATIONALITY IS VIETNAM ("VNM") ---
+Return JSON with this structure:
+{
+  "is_vietnamese": true,
+  "ho_va_ten": "FULL NAME IN UPPERCASE",
+  "ngay_sinh": "dd/mm/yyyy",
+  "gioi_tinh": "Nam" or "Nữ",
+  "quoc_tich": "VNM",
+  "so_giay_to": "ID Number",
+  "loai_giay_to": "CCCD" (default) or "Passport" or "Giấy tờ khác",
+  "ten_giay_to": "", // LEAVE EMPTY if loai_giay_to is CCCD or Passport. Only fill if it is "Giấy tờ khác".
+  "dia_chi": {
+    "tinh_tp": "Province/City Name",
+    "quan_huyen": "District Name",
+    "phuong_xa": "Ward/Commune Name",
+    "chi_tiet": "Street, House No, Village (exclude admin units)"
+  }
+}
+
+--- CASE 2: IF NATIONALITY IS NOT VIETNAM (FOREIGNER) ---
+Return JSON with this structure:
+{
+  "is_vietnamese": false,
+  "ho_va_ten": "FULL NAME IN UPPERCASE",
+  "ngay_sinh": "dd/mm/yyyy",
+  "gioi_tinh": "M" (if Male) or "F" (if Female), // Standardize to M/F
+  "quoc_tich": "ISO 3-Letter Code (e.g. USA, GBR, AUS)",
+  "so_ho_chieu": "Passport Number"
+}
+
+--- ERROR HANDLING ---
+If a field is not visible, return empty string "".`;
 
           const response = await ai.models.generateContent({
               model: 'gemini-2.0-flash-exp', 
@@ -677,21 +718,49 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
           
           const data = JSON.parse(text);
 
-          const newOcrData: ResidenceData = {
-              ...ocrResult,
-              ho_ten: data.ho_ten || '',
-              ngay_sinh: data.ngay_sinh || '',
-              gioi_tinh: data.gioi_tinh || '',
-              quoc_tich: data.quoc_tich || 'Việt Nam',
-              so_giay_to: data.so_giay_to || '',
-              loai_giay_to: data.loai_giay_to || 'CCCD',
-              tinh_tp: data.tinh_tp || '',
-              quan_huyen: data.quan_huyen || '',
-              phuong_xa: data.phuong_xa || '',
-              dia_chi_chitiet: data.dia_chi_chitiet || '',
-              ly_do: 'Du lịch',
-              loai_cu_tru: 'Lưu trú ngắn hạn'
+          // FIX: Normalize gender for foreigners
+          const normalizeGender = (val: string) => {
+              if (!val) return '';
+              const upper = val.toUpperCase();
+              if (upper === 'M' || upper === 'MALE') return 'Nam';
+              if (upper === 'F' || upper === 'FEMALE') return 'Nữ';
+              return val;
           };
+
+          let newOcrData = { ...ocrResult };
+
+          if (data.is_vietnamese) {
+              newOcrData = {
+                  ...newOcrData,
+                  ho_ten: data.ho_va_ten || '',
+                  ngay_sinh: data.ngay_sinh || '',
+                  gioi_tinh: data.gioi_tinh || '',
+                  quoc_tich: 'VNM',
+                  so_giay_to: data.so_giay_to || '',
+                  loai_giay_to: data.loai_giay_to || 'CCCD',
+                  tinh_tp: data.dia_chi?.tinh_tp || '',
+                  quan_huyen: data.dia_chi?.quan_huyen || '',
+                  phuong_xa: data.dia_chi?.phuong_xa || '',
+                  dia_chi_chitiet: data.dia_chi?.chi_tiet || '',
+                  loai_cu_tru: 'Lưu trú'
+              };
+          } else {
+              newOcrData = {
+                  ...newOcrData,
+                  ho_ten: data.ho_va_ten || '',
+                  ngay_sinh: data.ngay_sinh || '',
+                  gioi_tinh: normalizeGender(data.gioi_tinh), // Apply normalization
+                  quoc_tich: data.quoc_tich || '', // 'USA', etc.
+                  so_giay_to: data.so_ho_chieu || '',
+                  loai_giay_to: 'Passport',
+                  // Clear VN specific address fields
+                  tinh_tp: '',
+                  quan_huyen: '',
+                  phuong_xa: '',
+                  dia_chi_chitiet: '',
+                  loai_cu_tru: 'Lưu trú'
+              };
+          }
           
           setOcrResult(newOcrData);
           
@@ -708,7 +777,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                   idCard: newOcrData.so_giay_to,
                   gender: newOcrData.gioi_tinh,
                   type: 'Người lớn', 
-                  address: `${newOcrData.dia_chi_chitiet}, ${newOcrData.phuong_xa}, ${newOcrData.quan_huyen}, ${newOcrData.tinh_tp}`
+                  address: data.is_vietnamese ? `${newOcrData.dia_chi_chitiet}, ${newOcrData.phuong_xa}, ${newOcrData.quan_huyen}, ${newOcrData.tinh_tp}` : newOcrData.quoc_tich
               };
               setGuestList(prev => [...prev, newGuest]);
               notify('success', `Đã thêm khách: ${newOcrData.ho_ten}`);
@@ -733,13 +802,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
 
       let formattedCheckIn = '';
       let formattedCheckOut = '';
+      let rawCheckIn = '';
+      let rawCheckOut = '';
 
       try {
-          let rawCheckIn = formData.checkinDate;
+          rawCheckIn = formData.checkinDate || '';
           if (!rawCheckIn && booking?.checkinDate) rawCheckIn = booking.checkinDate;
           if (!rawCheckIn) rawCheckIn = new Date().toISOString();
 
-          let rawCheckOut = formData.checkoutDate;
+          rawCheckOut = formData.checkoutDate || '';
           if (!rawCheckOut && booking?.checkoutDate) rawCheckOut = booking.checkoutDate;
           if (!rawCheckOut) {
              const tmr = new Date();
@@ -760,39 +831,73 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
           formattedCheckOut = format(new Date(), 'dd/MM/yyyy');
       }
 
-      const idTypeMap: Record<string, string> = {
-          'CCCD': 'Căn cước công dân',
-          'Passport': 'Hộ chiếu',
-          'Khác': 'Giấy tờ khác'
-      };
-      const finalIdType = idTypeMap[ocrResult.loai_giay_to] || ocrResult.loai_giay_to;
+      // Determine Nationality
+      const isVietnam = ocrResult.quoc_tich === 'VNM' || ocrResult.quoc_tich === 'Việt Nam';
+      
+      let webhookPayload = {};
 
-      const sheetPayload = {
-          stt: "AUTO",
-          ho_va_ten: ocrResult.ho_ten.toUpperCase(),
-          ngay_sinh: ocrResult.ngay_sinh,
-          gioi_tinh: ocrResult.gioi_tinh,
-          quoc_tich: ocrResult.quoc_tich,
-          so_giay_to: ocrResult.so_giay_to,
-          loai_giay_to: finalIdType,
-          so_dien_thoai: ocrResult.so_dien_thoai,
-          tinh_tp: ocrResult.tinh_tp,
-          quan_huyen: ocrResult.quan_huyen,
-          phuong_xa: ocrResult.phuong_xa,
-          dia_chi_chitiet: ocrResult.dia_chi_chitiet,
-          loai_cu_tru: ocrResult.loai_cu_tru,
-          ly_do: ocrResult.ly_do,
-          ten_phong: isGroupMode ? selectedGroupRooms.join(', ') : formData.roomCode,
-          co_so: formData.facilityName,
-          ngay_den: formattedCheckIn,
-          ngay_di: formattedCheckOut
-      };
+      if (isVietnam) {
+          const idTypeMap: Record<string, string> = {
+              'CCCD': 'Căn cước công dân',
+              'Passport': 'Hộ chiếu',
+              'Khác': 'Giấy tờ khác'
+          };
+          const finalIdType = idTypeMap[ocrResult.loai_giay_to] || ocrResult.loai_giay_to;
+          
+          webhookPayload = {
+              sheet_target: "VIETNAM_GUEST",
+              data: {
+                  stt: "AUTO",
+                  ho_va_ten: ocrResult.ho_ten.toUpperCase(),
+                  ngay_sinh: ocrResult.ngay_sinh,
+                  gioi_tinh: ocrResult.gioi_tinh,
+                  quoc_tich: ocrResult.quoc_tich,
+                  so_giay_to: ocrResult.so_giay_to,
+                  loai_giay_to: finalIdType,
+                  ten_giay_to: ocrResult.loai_giay_to === 'Khác' ? 'Giấy tờ khác' : '',
+                  so_dien_thoai: ocrResult.so_dien_thoai,
+                  loai_cu_tru: ocrResult.loai_cu_tru,
+                  dia_chi_thuong_tru: {
+                      tinh_tp: ocrResult.tinh_tp,
+                      quan_huyen: ocrResult.quan_huyen,
+                      phuong_xa: ocrResult.phuong_xa,
+                      chi_tiet: ocrResult.dia_chi_chitiet
+                  },
+                  thoi_gian_luu_tru: {
+                      tu_ngay: format(parseISO(rawCheckIn), 'dd/MM/yyyy HH:mm:ss'),
+                      den_ngay: format(parseISO(rawCheckOut), 'dd/MM/yyyy HH:mm:ss')
+                  },
+                  ly_do: ocrResult.ly_do,
+                  phong: isGroupMode ? selectedGroupRooms.join(', ') : formData.roomCode
+              }
+          };
+      } else {
+          // Foreigner Payload
+          webhookPayload = {
+              sheet_target: "FOREIGN_GUEST",
+              data: {
+                  stt: "AUTO",
+                  ho_va_ten: ocrResult.ho_ten.toUpperCase(),
+                  ngay_sinh: ocrResult.ngay_sinh,
+                  dung_den: "D",
+                  gioi_tinh: ocrResult.gioi_tinh, 
+                  quoc_tich: ocrResult.quoc_tich, 
+                  so_ho_chieu: ocrResult.so_giay_to,
+                  ten_phong: isGroupMode ? selectedGroupRooms.join(', ') : formData.roomCode,
+                  ngay_den: formattedCheckIn, 
+                  ngay_di_du_kien: formattedCheckOut, 
+                  ngay_tra_phong: "",
+                  ghi_chu: ""
+              }
+          };
+      }
       
       const hasCorrectWebhook = webhooks.some(w => w.is_active && w.event_type === 'residence_declaration');
       if (hasCorrectWebhook) {
-          triggerWebhook('residence_declaration', sheetPayload);
+          triggerWebhook('residence_declaration', webhookPayload);
       }
 
+      // Guest History Log (Local DB)
       for (const guest of guestList) {
           if (!guest.idCard) continue; 
           
@@ -800,9 +905,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
               full_name: guest.fullName.toUpperCase(),
               dob: guest.dob || '',
               gender: guest.gender || '',
-              nationality: 'Việt Nam',
+              nationality: isVietnam ? 'Việt Nam' : ocrResult.quoc_tich,
               id_card_number: guest.idCard,
-              card_type: 'CCCD',
+              card_type: isVietnam ? 'CCCD' : 'Passport',
               address: guest.address || '',
               phone: '',
               booking_id: booking?.id || '',
@@ -1116,10 +1221,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={booking ? `Chi tiết Booking` : 'Tạo Booking Mới'} size="lg">
       <div className="flex flex-col h-full md:h-[80vh]">
-        {/* ... Rest of UI (Process Bar, Tabs, Forms) same as original file ... */}
-        {/* ... Include all original JSX here ... */}
-        {/* Truncated for brevity, assuming standard render logic applies */}
-        
         {/* Process Status Bar */}
         <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 mb-4 flex flex-col md:flex-row justify-between items-center gap-4">
              <div className="flex items-center gap-4 w-full md:w-auto">
@@ -1320,9 +1421,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                       </div>
                    </div>
 
-                   {/* ... (Keep Guest List Logic same as before) ... */}
-                   {/* Rest of the form UI */}
-                   {/* To save space, assume the rest of JSX is identical to original */}
                    <div className="mt-4 border-t border-slate-200 pt-4">
                        <div className="flex justify-between items-center mb-3">
                            <div className="flex items-center gap-2">
@@ -1405,8 +1503,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                 </div>
               )}
               
-              {/* Other tabs rendering... identical to old file... */}
-              {/* Omitted for brevity: services, payment tabs logic are UI only */}
               {activeTab === 'services' && (
                 <div className="flex flex-col md:flex-row gap-6 md:h-[450px] animate-in slide-in-from-right duration-300">
                    <div className="flex-1 overflow-y-auto border border-slate-100 rounded-2xl p-4 bg-slate-50 custom-scrollbar max-h-[300px] md:max-h-full">
@@ -1451,9 +1547,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
 
               {activeTab === 'payment' && (
                  <div className="space-y-6 animate-in slide-in-from-right duration-300">
-                    {/* ... (Payment UI same as before) ... */}
-                    {/* (Omitted for brevity as requested logic change is in OCR) */}
-                    {/* Placeholder for existing payment logic UI */}
                     <div className={`flex flex-col sm:flex-row justify-between items-center p-5 rounded-2xl border shadow-md gap-4 ${displayRemaining <= 0 ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-700'}`}>
                        <div className="flex items-center gap-3 w-full sm:w-auto">
                           <div className={`p-2 rounded-full ${displayRemaining <= 0 ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}>
@@ -1466,7 +1559,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                        </div>
                        {displayRemaining > 0 && <button type="button" onClick={handleQuickPayAll} className="w-full sm:w-auto px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-rose-700 transition-all active:scale-95 uppercase tracking-widest">Thu nhanh</button>}
                     </div>
-                    {/* ... (Rest of Payment UI) ... */}
                     <div className="flex flex-col md:flex-row gap-6">
                         {/* History */}
                         {!isGroupPaymentMode && (
@@ -1619,6 +1711,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                                          </div>
                                      </div>
 
+                                     {ocrResult.quoc_tich === 'VNM' || ocrResult.quoc_tich === 'Việt Nam' ? (
                                      <div>
                                          <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Địa chỉ thường trú (Tách cột)</label>
                                          <div className="grid grid-cols-3 gap-2 mb-2">
@@ -1628,15 +1721,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                                          </div>
                                          <input className="w-full border rounded p-2 text-sm bg-slate-50" placeholder="Số nhà, đường, thôn/xóm..." value={ocrResult.dia_chi_chitiet} onChange={e => setOcrResult({...ocrResult, dia_chi_chitiet: e.target.value})} />
                                      </div>
+                                     ) : null}
 
+                                     {ocrResult.quoc_tich === 'VNM' || ocrResult.quoc_tich === 'Việt Nam' ? (
                                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                                          <div className="grid grid-cols-2 gap-3">
                                              <div>
                                                  <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Loại cư trú</label>
                                                  <select className="w-full border rounded p-2 text-sm bg-white" value={ocrResult.loai_cu_tru} onChange={e => setOcrResult({...ocrResult, loai_cu_tru: e.target.value})}>
-                                                     <option value="Lưu trú ngắn hạn">Lưu trú ngắn hạn</option>
-                                                     <option value="Lưu trú dài hạn">Lưu trú dài hạn</option>
+                                                     <option value="Lưu trú">Lưu trú</option>
                                                      <option value="Tạm trú">Tạm trú</option>
+                                                     <option value="Thường trú">Thường trú</option>
                                                  </select>
                                              </div>
                                              <div>
@@ -1645,6 +1740,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                                              </div>
                                          </div>
                                      </div>
+                                     ) : null}
 
                                      <div className="grid grid-cols-2 gap-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100 animate-in fade-in">
                                          <div>
