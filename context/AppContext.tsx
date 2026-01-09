@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { 
   Booking, Facility, Room, Collaborator, Expense, ServiceItem, HousekeepingTask, 
-  Settings, WebhookConfig, Shift, ToastMessage, ShiftSchedule, AttendanceAdjustment, InventoryTransaction, GuestProfile, LeaveRequest, ServiceUsage
+  Settings, WebhookConfig, Shift, ToastMessage, ShiftSchedule, AttendanceAdjustment, InventoryTransaction, GuestProfile, LeaveRequest, ServiceUsage, AppConfig
 } from '../types';
 import { storageService } from '../services/storage';
 import { supabase } from '../services/supabaseClient'; 
@@ -68,6 +68,10 @@ interface AppContextType {
   updateWebhook: (w: WebhookConfig) => Promise<void>;
   deleteWebhook: (id: string) => Promise<void>;
   triggerWebhook: (event: string, payload: any) => Promise<void>;
+  
+  // Configs
+  getGeminiApiKey: () => Promise<string | null>;
+  setAppConfig: (cfg: AppConfig) => Promise<void>;
   
   addGuestProfile: (p: GuestProfile) => Promise<void>;
 
@@ -322,6 +326,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       refreshData(true);
   };
 
+  // APP CONFIGS
+  const getGeminiApiKey = async () => {
+      // Priority 1: Check DB
+      const dbKey = await storageService.getAppConfig('GEMINI_API_KEY');
+      if (dbKey && dbKey.length > 10) return dbKey;
+      
+      // Priority 2: Check Environment
+      if (process.env.API_KEY && process.env.API_KEY.length > 10) return process.env.API_KEY;
+      
+      return null;
+  };
+
+  const setAppConfig = async (cfg: AppConfig) => {
+      await storageService.setAppConfig(cfg);
+  };
+
   const addBooking = async (b: Booking): Promise<boolean> => {
     const isAvailable = checkAvailability(b.facilityName, b.roomCode, b.checkinDate, b.checkoutDate);
     if (!isAvailable) { notify('error', 'Phòng vừa bị đặt bởi người khác! Vui lòng làm mới.'); return false; }
@@ -428,6 +448,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
        handleLinenCheckIn, handleLinenExchange, processMinibarUsage,
        syncHousekeepingTasks, 
        addWebhook, updateWebhook, deleteWebhook, triggerWebhook,
+       getGeminiApiKey, setAppConfig,
        addGuestProfile,
        openShift, closeShift,
        upsertSchedule, deleteSchedule, upsertAdjustment,
@@ -441,6 +462,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 export const useAppContext = () => {
   const context = useContext(AppContext);
-  if (context === undefined) throw new Error('useAppContext must be used within an AppProvider');
+  if (context === undefined) {
+    throw new Error('useAppContext must be used within an AppProvider');
+  }
   return context;
 };

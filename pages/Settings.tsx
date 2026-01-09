@@ -1,13 +1,13 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { Plus, Trash, Save, Check, X, ShoppingCart, RefreshCw, Database, Radio, Globe, Send, AlertTriangle } from 'lucide-react';
+import { Plus, Trash, Save, Check, X, ShoppingCart, RefreshCw, Database, Radio, Globe, Send, AlertTriangle, Cpu, Lock } from 'lucide-react';
 import { Settings as SettingsType, ServiceItem, ItemCategory, WebhookConfig } from '../types';
 import { MOCK_SERVICES } from '../constants';
 import { storageService } from '../services/storage';
 
 export const Settings: React.FC = () => {
-  const { settings, updateSettings, services, addService, deleteService, notify, refreshData, webhooks, addWebhook, deleteWebhook, updateWebhook, triggerWebhook } = useAppContext();
+  const { settings, updateSettings, services, addService, deleteService, notify, refreshData, webhooks, addWebhook, deleteWebhook, updateWebhook, triggerWebhook, getGeminiApiKey, setAppConfig } = useAppContext();
   const [localSettings, setLocalSettings] = useState(settings);
   
   // State for adding simple strings
@@ -21,6 +21,19 @@ export const Settings: React.FC = () => {
   // State for adding Webhook
   const [isAddingWebhook, setIsAddingWebhook] = useState(false);
   const [newWebhook, setNewWebhook] = useState<Partial<WebhookConfig>>({ url: '', event_type: 'residence_declaration', description: '', is_active: true });
+
+  // State for Gemini Key
+  const [geminiKey, setGeminiKey] = useState('');
+  const [isSavingKey, setIsSavingKey] = useState(false);
+
+  useEffect(() => {
+      // Load current key on mount (masked for security if needed, but here simple retrieval)
+      const loadKey = async () => {
+          const key = await getGeminiApiKey();
+          if (key) setGeminiKey(key);
+      };
+      loadKey();
+  }, []);
 
   const handleChange = (section: keyof SettingsType, value: any) => {
     setLocalSettings(prev => ({ ...prev, [section]: value }));
@@ -47,7 +60,23 @@ export const Settings: React.FC = () => {
     }
   };
   
-  // Service Logic
+  const handleSaveGeminiKey = async () => {
+      setIsSavingKey(true);
+      try {
+          await setAppConfig({
+              key: 'GEMINI_API_KEY',
+              value: geminiKey,
+              description: 'API Key Google Gemini cho tính năng OCR và Chat AI'
+          });
+          notify('success', 'Đã lưu API Key thành công!');
+      } catch (e) {
+          notify('error', 'Lỗi khi lưu API Key');
+      } finally {
+          setIsSavingKey(false);
+      }
+  };
+
+  // ... (Service Logic Omitted, same as before) ...
   const handleAddService = () => {
      if (newService.name && newService.price !== undefined) {
         const item: ServiceItem = {
@@ -66,7 +95,7 @@ export const Settings: React.FC = () => {
      }
   };
 
-  // Webhook Logic
+  // ... (Webhook Logic Omitted, same as before) ...
   const handleAddWebhook = () => {
       if (newWebhook.url) {
           const item: WebhookConfig = {
@@ -89,7 +118,6 @@ export const Settings: React.FC = () => {
           test_id: Date.now(),
           event: wh.event_type,
           source: "Hotel Manager Pro",
-          // Mock data cho khai báo lưu trú
           ho_va_ten: "NGUYEN VAN TEST",
           so_giay_to: "0123456789",
           thoi_gian_tu: new Date().toISOString(),
@@ -101,7 +129,6 @@ export const Settings: React.FC = () => {
           }
       };
       
-      // Gọi hàm trigger chung
       triggerWebhook(wh.event_type, mockPayload);
   };
 
@@ -171,6 +198,40 @@ export const Settings: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
          
+         {/* SYSTEM CONFIG (AI KEY) */}
+         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col lg:col-span-3">
+             <div className="flex justify-between items-center mb-4">
+                <div>
+                   <h3 className="font-bold text-gray-800 flex items-center gap-2"><Cpu size={20}/> Cấu hình AI (Gemini API)</h3>
+                   <p className="text-xs text-slate-500 mt-1">Quản lý API Key cho tính năng OCR và Chatbot.</p>
+                </div>
+                <div className="flex items-center gap-2 bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-xs text-blue-800">
+                    <Lock size={14}/> <span>Key được lưu trong Database (Secure)</span>
+                </div>
+             </div>
+             
+             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                 <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Gemini API Key</label>
+                 <div className="flex gap-2">
+                     <input 
+                        type="password" 
+                        className="flex-1 border-2 border-slate-200 rounded-lg p-2.5 text-sm font-mono text-slate-800 focus:border-brand-500 outline-none"
+                        placeholder="AIzaSy..."
+                        value={geminiKey}
+                        onChange={e => setGeminiKey(e.target.value)}
+                     />
+                     <button 
+                        onClick={handleSaveGeminiKey}
+                        disabled={isSavingKey}
+                        className="bg-brand-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-md hover:bg-brand-700 flex items-center gap-2"
+                     >
+                         {isSavingKey ? 'Đang lưu...' : 'Cập nhật Key'}
+                     </button>
+                 </div>
+                 <p className="text-[10px] text-slate-400 mt-2 italic">Key này sẽ được ưu tiên sử dụng thay cho biến môi trường (Environment Variable).</p>
+             </div>
+         </div>
+
          {/* Webhooks Section */}
          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col h-full lg:col-span-3">
              <div className="flex justify-between items-center mb-4">

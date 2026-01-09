@@ -1,6 +1,6 @@
 
 import { supabase } from './supabaseClient';
-import { Facility, Room, Booking, Collaborator, Expense, ServiceItem, HousekeepingTask, WebhookConfig, Shift, ShiftSchedule, AttendanceAdjustment, InventoryTransaction, GuestProfile, LeaveRequest } from '../types';
+import { Facility, Room, Booking, Collaborator, Expense, ServiceItem, HousekeepingTask, WebhookConfig, Shift, ShiftSchedule, AttendanceAdjustment, InventoryTransaction, GuestProfile, LeaveRequest, AppConfig } from '../types';
 import { MOCK_FACILITIES, MOCK_ROOMS, MOCK_COLLABORATORS, MOCK_BOOKINGS, MOCK_SERVICES } from '../constants';
 
 const logError = (message: string, error: any) => {
@@ -36,6 +36,26 @@ const getDataStartDate = () => {
 };
 
 export const storageService = {
+  // Configs (API Keys, System Settings)
+  getAppConfig: async (key: string): Promise<string | null> => {
+      try {
+          const { data, error } = await supabase.from('app_configs').select('value').eq('key', key).single();
+          if (error) {
+              if(!isTableMissingError(error)) console.warn(`Config ${key} not found.`);
+              return null;
+          }
+          return data?.value || null;
+      } catch (e) {
+          return null;
+      }
+  },
+  
+  setAppConfig: async (config: AppConfig) => {
+      const { error } = await supabase.from('app_configs').upsert(config);
+      if (error) logError('Error setting config', error);
+      return { error };
+  },
+
   // Facilities
   getFacilities: async (): Promise<Facility[]> => {
     return safeFetch(supabase.from('facilities').select('*').order('id', { ascending: true }), MOCK_FACILITIES);

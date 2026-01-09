@@ -279,3 +279,10 @@ export interface SheetBooking {
   checkOut: string; // YYYY-MM-DD
   status: string;
 }
+
+// Config Table
+export interface AppConfig {
+  key: string;
+  value: string;
+  description?: string;
+}
