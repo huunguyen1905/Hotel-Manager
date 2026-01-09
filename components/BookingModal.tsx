@@ -1295,7 +1295,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({ isOpen, onClose, boo
                                               <button key={idx} type="button" onClick={() => handleSheetSelect(row)} className="w-full text-left px-3 py-2 hover:bg-blue-50 text-xs flex justify-between items-center">
                                                   <div>
                                                       <div className="font-bold text-slate-800">{row.customerName}</div>
-                                                      <div className="text-[10px] text-slate-500">{row.platform} • {row.checkIn} -> {row.checkOut}</div>
+                                                      <div className="text-[10px] text-slate-500">{row.platform} • {row.checkIn} &rarr; {row.checkOut}</div>
                                                   </div>
                                                   <div className="text-[10px] font-mono text-slate-400">{row.bookingCode}</div>
                                               </button>
