@@ -68,7 +68,7 @@ export const RecipeModal: React.FC<Props> = ({ isOpen, onClose, recipeKey, exist
       
       const itemsPayload = Object.entries(selectedItems).map(([id, qty]) => ({
           itemId: id,
-          quantity: qty
+          quantity: Number(qty)
       }));
 
       const newRecipe: RoomRecipe = {

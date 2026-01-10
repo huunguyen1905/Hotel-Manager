@@ -111,8 +111,9 @@ export const storageService = {
       
       // Also check for new tables
       const { error: tableError } = await supabase.from('settings').select('id').limit(1);
+      const { error: recipeError } = await supabase.from('room_recipes').select('id').limit(1);
 
-      if ((error && isColumnMissingError(error)) || (tableError && isTableMissingError(tableError))) {
+      if ((error && isColumnMissingError(error)) || (tableError && isTableMissingError(tableError)) || (recipeError && isTableMissingError(recipeError))) {
           return { missing: true, table: 'bookings_or_settings' };
       }
       return { missing: false };
@@ -168,7 +169,8 @@ export const storageService = {
       try {
           const { data, error } = await supabase.from('settings').select('*').eq('id', 'global').single();
           if (error || !data) return DEFAULT_SETTINGS;
-          return data.raw_json as Settings;
+          // Merge with defaults to ensure all fields exist
+          return { ...DEFAULT_SETTINGS, ...(data.raw_json as Settings) };
       } catch (e) {
           return DEFAULT_SETTINGS;
       }
@@ -185,19 +187,30 @@ export const storageService = {
 
   getRoomRecipes: async (): Promise<Record<string, RoomRecipe>> => {
       try {
-          const { data, error } = await safeFetch(supabase.from('room_recipes').select('*'), [], 'room_recipes') as any;
-          if (!data || data.length === 0) return ROOM_RECIPES;
+          // FIX: safeFetch returns the data array directly, NOT { data, error }
+          const data = await safeFetch(supabase.from('room_recipes').select('*'), [], 'room_recipes');
           
-          const recipes: Record<string, RoomRecipe> = {};
-          data.forEach((r: any) => {
-              recipes[r.id] = {
-                  roomType: r.id,
-                  description: r.description,
-                  items: r.items_json
-              };
-          });
+          // Start with Defaults, then override with DB data
+          const recipes: Record<string, RoomRecipe> = { ...ROOM_RECIPES };
+          
+          if (data && Array.isArray(data) && data.length > 0) {
+              data.forEach((r: any) => {
+                  // Safe JSON parse for items
+                  let items = r.items_json;
+                  if (typeof items === 'string') {
+                      try { items = JSON.parse(items); } catch(e) { items = []; }
+                  }
+
+                  recipes[r.id] = {
+                      roomType: r.id,
+                      description: r.description,
+                      items: items || []
+                  };
+              });
+          }
           return recipes;
       } catch (e) {
+          console.error("Error parsing room recipes", e);
           return ROOM_RECIPES;
       }
   },
