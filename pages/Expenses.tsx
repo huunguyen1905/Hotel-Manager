@@ -76,8 +76,8 @@ export const Expenses: React.FC = () => {
                     className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer w-full"
                 />
              </div>
-             <button onClick={handleAdd} className="bg-brand-600 text-white px-md py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-brand-700 transition-all shadow-md active:scale-95 whitespace-nowrap">
-                <Plus size={20} /> <span className="inline">Thêm chi phí</span>
+             <button onClick={handleAdd} className="bg-brand-600 text-white px-3 md:px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-brand-700 transition-all shadow-md active:scale-95 whitespace-nowrap">
+                <Plus size={20} /> <span className="hidden md:inline">Thêm chi phí</span>
              </button>
          </div>
       </div>
