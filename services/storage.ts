@@ -11,7 +11,7 @@ const logError = (message: string, error: any) => {
   }
   // Suppress network errors and switch to mock mode quietly
   if (error?.message?.includes('Failed to fetch') || error?.toString().includes('TypeError: Failed to fetch')) {
-      console.warn(`[NETWORK ERROR] ${message}. Switching to Offline/Mock mode.`);
+      console.warn(`[NETWORK ERROR] ${message}.`);
       return;
   }
   console.error(`[STORAGE ERROR] ${message}:`, error);
@@ -32,6 +32,9 @@ const isNetworkError = (error: any) => {
     return error?.message?.includes('Failed to fetch') || error?.toString().includes('TypeError: Failed to fetch');
 };
 
+// Helper for Retry Logic
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Biến cờ để kiểm tra xem đang dùng Mock hay Real
 export let IS_USING_MOCK = false;
 
@@ -51,8 +54,9 @@ const safeFetch = async <T>(promise: PromiseLike<{ data: T[] | null; error: any 
             }
             // Handle Network Errors specifically
             if (isNetworkError(error)) {
-                IS_USING_MOCK = true;
-                logError(`Failed to fetch ${tableName}`, error);
+                // MODIFIED: Do NOT switch to mock immediately on a single fetch failure.
+                // Let checkConnection handle the global state transition to avoid false positives during Cold Start.
+                logError(`Failed to fetch ${tableName} (Network)`, error);
                 return fallback;
             }
             
@@ -66,7 +70,7 @@ const safeFetch = async <T>(promise: PromiseLike<{ data: T[] | null; error: any 
         if (!connectionChecked) connectionChecked = true;
         return data;
     } catch (err) {
-        IS_USING_MOCK = true;
+        // MODIFIED: Don't switch immediately on exception either.
         logError(`Network Exception fetching ${tableName}`, err);
         return fallback;
     }
@@ -81,25 +85,35 @@ const getDataStartDate = () => {
 };
 
 export const storageService = {
-  // Check Connection Status
+  // Check Connection Status with RETRY STRATEGY (Cold Start Fix)
   checkConnection: async () => {
       if (IS_USING_MOCK) return false;
-      try {
-          const { data, error } = await supabase.from('app_configs').select('count').limit(1).single();
-          if (error) {
+      
+      const MAX_RETRIES = 3;
+      
+      for (let i = 0; i < MAX_RETRIES; i++) {
+          try {
+              const { data, error } = await supabase.from('app_configs').select('count').limit(1).single();
+              
+              if (!error) return true; // Connection Successful!
+              
+              // If it's a network error, wait and retry
               if (isNetworkError(error)) {
-                  IS_USING_MOCK = true;
-                  return false;
+                  console.warn(`Connection attempt ${i + 1}/${MAX_RETRIES} failed. Retrying in 1.5s...`);
+                  if (i < MAX_RETRIES - 1) await delay(1500); 
+              } else {
+                  // If it's another error (e.g. Table missing), we are connected but schema is wrong.
+                  // Treat as connected to avoid Red Banner.
+                  return true;
               }
-              console.warn("Supabase Connection Issue:", error.message);
-              // If it's a table error, we might still be connected but schema is wrong
-              return !isNetworkError(error);
+          } catch (e) {
+              if (i < MAX_RETRIES - 1) await delay(1500);
           }
-          return true;
-      } catch (e) {
-          IS_USING_MOCK = true;
-          return false;
       }
+
+      // If we reach here, all retries failed. Now we are truly offline.
+      IS_USING_MOCK = true;
+      return false;
   },
 
   // NEW: Check for required schema columns (Using lowercase to match Postgres standard)

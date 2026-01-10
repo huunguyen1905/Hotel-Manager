@@ -4,7 +4,7 @@ import { useAppContext } from '../context/AppContext';
 import { format, parseISO } from 'date-fns';
 import { 
   Brush, CheckCircle, Calculator, Copy, User, Filter, 
-  CheckSquare, Square, LogOut, BedDouble, AlertCircle, X, Zap, RotateCcw, BarChart3, Clock, RefreshCw, AlertTriangle, Flame, Star, HelpCircle, ThumbsUp, ThumbsDown
+  CheckSquare, Square, LogOut, BedDouble, AlertCircle, X, Zap, RotateCcw, BarChart3, Clock, RefreshCw, AlertTriangle, Flame, Star, HelpCircle, ThumbsUp, ThumbsDown, Calendar
 } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { HousekeepingTask } from '../types';
@@ -447,8 +447,57 @@ export const Housekeeping: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-enter h-[calc(100vh-100px)] flex flex-col">
-      {/* TOOLBAR */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0">
+      {/* TOOLBAR - MOBILE OPTIMIZED (COMPACT HORIZONTAL SCROLL) */}
+      <div className="md:hidden bg-white p-3 rounded-xl border border-slate-200 shadow-sm shrink-0 mb-2">
+          {/* Row 1: Header & Tools */}
+          <div className="flex justify-between items-center mb-3">
+              <div className="flex items-center gap-3">
+                  <div className="p-2 bg-brand-50 text-brand-600 rounded-lg shrink-0"><Brush size={18} /></div>
+                  <div>
+                      <h1 className="text-sm font-bold text-slate-800 leading-tight">Điều phối BP</h1>
+                      <div className="flex items-center gap-1 mt-0.5">
+                          <Calendar size={10} className="text-slate-400"/>
+                          <input type="date" className="text-xs font-medium text-slate-500 bg-transparent outline-none p-0 w-[85px]" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
+                      </div>
+                  </div>
+              </div>
+              <div className="flex items-center gap-2">
+                  <button onClick={() => refreshData()} className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors" title="Reload"><RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} /></button>
+                  <button onClick={() => setShowStats(true)} className="p-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors" title="Tính công"><Calculator size={18} /></button>
+              </div>
+          </div>
+
+          {/* Row 2: Scrollable Actions/Filters OR Bulk Actions */}
+          {selectedTaskIds.length > 0 ? (
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 animate-in slide-in-from-right-5 fade-in">
+                  <span className="shrink-0 text-[10px] font-black text-brand-600 bg-brand-50 px-2 py-1.5 rounded-lg border border-brand-100">{selectedTaskIds.length} chọn</span>
+                  <select className="shrink-0 text-xs border border-brand-200 rounded-lg px-2 py-1.5 outline-none bg-white min-w-[100px]" onChange={(e) => handleBulkAction('Assign', e.target.value)} value="">
+                      <option value="" disabled>-- Giao --</option>
+                      {workload.staffList.map(s => <option key={s} value={s}>{s}</option>)}
+                      <option value="">(Hủy)</option>
+                  </select>
+                  <button onClick={() => handleBulkAction('Status', 'Done')} className="shrink-0 px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg shadow-sm">Xong</button>
+                  <button onClick={() => setSelectedTaskIds([])} className="shrink-0 p-1.5 text-slate-400 bg-slate-50 rounded-lg"><X size={16}/></button>
+              </div>
+          ) : (
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+                  <button onClick={handleAutoAssign} className="shrink-0 px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-full text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95 transition-transform">
+                      <Zap size={12} className="fill-yellow-300 text-yellow-300" /> <span className="whitespace-nowrap">Tự động</span>
+                  </button>
+                  
+                  <div className="w-[1px] h-5 bg-slate-200 flex-shrink-0 mx-1"></div>
+
+                  {(['All', 'Checkout', 'Stayover', 'Dirty'] as const).map(t => (
+                      <button key={t} onClick={() => setFilterType(t)} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all border whitespace-nowrap ${filterType === t ? 'bg-slate-800 text-white border-slate-800' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                          {t === 'All' ? 'Tất cả' : t}
+                      </button>
+                  ))}
+              </div>
+          )}
+      </div>
+
+      {/* TOOLBAR - DESKTOP (ORIGINAL) */}
+      <div className="hidden md:block bg-white p-4 rounded-xl border border-slate-200 shadow-sm shrink-0">
          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div className="flex items-center gap-4">
                <div className="p-3 bg-brand-50 text-brand-600 rounded-xl shadow-sm"><Brush size={24} /></div>
