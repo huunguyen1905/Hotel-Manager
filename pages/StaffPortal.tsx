@@ -1,11 +1,11 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   LogOut, CheckCircle, Clock, MapPin, 
   ChevronRight, CheckSquare, Square, 
-  ArrowLeft, ListChecks, Info, Shirt, Loader2, Beer, Package, Plus, Minus, RefreshCw, ArchiveRestore, LayoutDashboard
+  ArrowLeft, ListChecks, Info, Shirt, Loader2, Beer, Package, Plus, Minus, RefreshCw, ArchiveRestore, LayoutDashboard, AlertTriangle
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { HousekeepingTask, ChecklistItem, RoomRecipeItem, ServiceItem, LendingItem } from '../types';
@@ -38,6 +38,9 @@ export const StaffPortal: React.FC = () => {
   
   // State quản lý tiêu hao (Minibar, Amenity)
   const [consumedItems, setConsumedItems] = useState<Record<string, number>>({});
+  
+  // State quản lý thu hồi đồ vải (Linen Return - Actual Count)
+  const [returnedLinenCounts, setReturnedLinenCounts] = useState<Record<string, number>>({});
 
   const navigate = useNavigate();
   
@@ -158,13 +161,14 @@ export const StaffPortal: React.FC = () => {
   const checkoutReturnList = useMemo(() => {
       if (!activeTask || activeTask.task_type !== 'Checkout') return [];
       
-      const combinedMap = new Map<string, { name: string, qty: number, isExtra: boolean }>();
+      const combinedMap = new Map<string, { id: string, name: string, qty: number, isExtra: boolean }>();
 
       // 1. Add Recipe Items (Standard)
       recipeItems.forEach(item => {
           if (item.category === 'Linen' || item.category === 'Asset') {
               const id = item.id || item.fallbackName;
               combinedMap.set(id, {
+                  id: id,
                   name: item.name || item.fallbackName,
                   qty: item.requiredQty,
                   isExtra: false
@@ -192,6 +196,7 @@ export const StaffPortal: React.FC = () => {
                           existing.isExtra = true; // Mark as having extra
                       } else {
                           combinedMap.set(l.item_id, {
+                              id: l.item_id,
                               name: l.item_name,
                               qty: l.quantity,
                               isExtra: true
@@ -205,12 +210,25 @@ export const StaffPortal: React.FC = () => {
       return Array.from(combinedMap.values());
   }, [activeTask, recipeItems, bookings]);
 
+  // --- INITIALIZE ACTUAL COUNTS ON TASK OPEN ---
+  useEffect(() => {
+      if (activeTask?.task_type === 'Checkout' && checkoutReturnList.length > 0) {
+          const initialCounts: Record<string, number> = {};
+          checkoutReturnList.forEach(item => {
+              initialCounts[item.id] = item.qty; // Default actual = expected (Full return)
+          });
+          setReturnedLinenCounts(initialCounts);
+      } else {
+          setReturnedLinenCounts({});
+      }
+  }, [activeTask, checkoutReturnList]);
+
   const openTaskDetail = (task: typeof myTasks[0]) => {
       if (task.status === 'Done') return;
       setActiveTask(task);
       const savedChecklist = task.checklist ? JSON.parse(task.checklist) : [...DEFAULT_CHECKLIST];
       setLocalChecklist(savedChecklist);
-      setConsumedItems({}); // Reset counts
+      setConsumedItems({}); // Reset consumables
   };
 
   const toggleCheckItem = (id: string) => {
@@ -219,6 +237,14 @@ export const StaffPortal: React.FC = () => {
 
   const updateConsumed = (itemId: string, delta: number) => {
       setConsumedItems(prev => {
+          const current = prev[itemId] || 0;
+          const next = Math.max(0, current + delta);
+          return { ...prev, [itemId]: next };
+      });
+  };
+
+  const updateReturnedLinen = (itemId: string, delta: number) => {
+      setReturnedLinenCounts(prev => {
           const current = prev[itemId] || 0;
           const next = Math.max(0, current + delta);
           return { ...prev, [itemId]: next };
@@ -271,18 +297,38 @@ export const StaffPortal: React.FC = () => {
         
         await processMinibarUsage(activeTask.facilityName, activeTask.room_code, itemsToProcess);
 
-        // 2. Process Linen Exchange / Return
+        // 2. Process Linen Exchange / Return (Lost & Found Logic)
         let linenNote = '';
         if (activeTask.task_type === 'Checkout') {
-            // CHECKOUT: AUTO RETURN ALL (Recipe + Extra)
-            const returnItems = checkoutReturnList.map(i => ({ itemId: i.name, qty: i.qty }));
-            if (returnItems.length > 0) {
-                await processCheckoutLinenReturn(activeTask.facilityName, activeTask.room_code, returnItems);
-                linenNote = ` (Thu hồi: ${returnItems.length} loại đồ vải)`;
+            const missingItems: string[] = [];
+            const returnItemsPayload: { itemId: string, qty: number }[] = [];
+
+            checkoutReturnList.forEach(item => {
+                const actual = returnedLinenCounts[item.id] ?? item.qty;
+                const expected = item.qty;
+                
+                // Add to payload for warehouse return (Only what was actually found)
+                if (actual > 0) {
+                    returnItemsPayload.push({ itemId: item.name, qty: actual });
+                }
+
+                // Check Variance
+                if (actual < expected) {
+                    missingItems.push(`${item.name} x${expected - actual}`);
+                }
+            });
+
+            if (returnItemsPayload.length > 0) {
+                await processCheckoutLinenReturn(activeTask.facilityName, activeTask.room_code, returnItemsPayload);
+                linenNote = ` (Thu hồi: ${returnItemsPayload.length} loại)`;
+            }
+            
+            // Auto append Lost Item Note
+            if (missingItems.length > 0) {
+                linenNote += `\n[BÁO MẤT/HỎNG]: ${missingItems.join(', ')}`;
             }
         } else {
             // STAYOVER: Record consumption only (Manual input assumed for now)
-            // TODO: Enhance stayover exchange logic if needed
         }
         
         // 3. Update Task Status
@@ -291,8 +337,7 @@ export const StaffPortal: React.FC = () => {
             status: 'Done',
             checklist: JSON.stringify(localChecklist),
             completed_at: new Date().toISOString(),
-            // For checkout, we assume all gathered. For others, count input.
-            linen_exchanged: activeTask.task_type === 'Checkout' ? checkoutReturnList.reduce((sum, i) => sum + i.qty, 0) : 0,
+            linen_exchanged: activeTask.task_type === 'Checkout' ? checkoutReturnList.reduce((sum, i) => sum + (returnedLinenCounts[i.id] ?? i.qty), 0) : 0,
             note: (activeTask.note || '') + linenNote
         };
 
@@ -302,7 +347,7 @@ export const StaffPortal: React.FC = () => {
         const roomObj = rooms.find(r => r.facility_id === activeTask.facility_id && r.name === activeTask.room_code);
         if (roomObj) {
             await upsertRoom({ ...roomObj, status: 'Đã dọn' });
-            notify('success', `Hoàn thành P.${activeTask.room_code}. Kho & Phí đã cập nhật!`);
+            notify('success', `Hoàn thành P.${activeTask.room_code}.`);
         }
         
         setActiveTask(null);
@@ -479,20 +524,41 @@ export const StaffPortal: React.FC = () => {
                             {activeTask.task_type === 'Checkout' ? (
                                 <div className="space-y-3">
                                     <div className="bg-blue-50 p-4 rounded-xl text-blue-800 text-xs font-bold border border-blue-100 flex items-center gap-2 mb-2">
-                                        <Info size={16}/> Hệ thống tự động liệt kê số lượng cần thu hồi (Gồm đồ chuẩn + đồ khách mượn thêm). Hãy kiểm đếm đủ và gom về kho bẩn.
+                                        <Info size={16}/> Kiểm đếm số lượng thực tế mang ra khỏi phòng (Lost & Found).
                                     </div>
-                                    {checkoutReturnList.map((item, idx) => (
-                                        <div key={idx} className="flex items-center justify-between bg-white p-3 rounded-xl border border-blue-100 shadow-sm">
+                                    {checkoutReturnList.map((item, idx) => {
+                                        const actual = returnedLinenCounts[item.id] ?? item.qty;
+                                        const diff = actual - item.qty;
+                                        
+                                        return (
+                                        <div key={idx} className={`flex items-center justify-between bg-white p-3 rounded-xl border shadow-sm ${diff < 0 ? 'border-red-200 bg-red-50' : 'border-blue-100'}`}>
                                             <div className="flex items-center gap-3">
-                                                <Shirt size={20} className="text-blue-400"/>
+                                                <Shirt size={20} className={diff < 0 ? "text-red-400" : "text-blue-400"}/>
                                                 <div>
                                                     <div className="font-bold text-slate-700 text-sm">{item.name}</div>
-                                                    {item.isExtra && <span className="text-[9px] text-purple-600 font-bold bg-purple-50 px-1 rounded">Có đồ mượn thêm</span>}
+                                                    <div className="text-[10px] text-slate-500 font-medium">
+                                                        Chuẩn: {item.qty} 
+                                                        {item.isExtra && <span className="text-purple-600 ml-1 font-bold">(+Mượn)</span>}
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div className="font-black text-lg text-blue-600">{item.qty}</div>
+                                            
+                                            {/* Counter UI */}
+                                            <div className="flex items-center gap-3">
+                                                <button onClick={() => updateReturnedLinen(item.id, -1)} className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center hover:bg-slate-200 active:scale-90 transition-transform"><Minus size={16}/></button>
+                                                <div className="flex flex-col items-center w-12">
+                                                    <span className={`text-lg font-black ${diff < 0 ? 'text-red-600' : 'text-blue-600'}`}>{actual}</span>
+                                                    {diff !== 0 && (
+                                                        <span className={`text-[8px] font-bold uppercase ${diff < 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                                                            {diff < 0 ? `Thiếu ${Math.abs(diff)}` : `Dư ${diff}`}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <button onClick={() => updateReturnedLinen(item.id, 1)} className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 active:scale-90 transition-transform"><Plus size={16}/></button>
+                                            </div>
                                         </div>
-                                    ))}
+                                        );
+                                    })}
                                     {checkoutReturnList.length === 0 && <div className="text-center text-xs text-slate-400 italic">Không có đồ vải cần thu hồi.</div>}
                                 </div>
                             ) : (

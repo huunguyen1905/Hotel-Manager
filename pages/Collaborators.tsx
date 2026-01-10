@@ -1,18 +1,18 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { Collaborator, ShiftSchedule, AttendanceAdjustment, LeaveRequest } from '../types';
 import { CollaboratorModal } from '../components/CollaboratorModal';
 import { 
   Pencil, Trash2, Plus, Search, ClipboardList,
   ChevronLeft, ChevronRight, Calendar, Edit2, FileDown, Wallet, DollarSign, Sun, Moon, 
-  CheckCircle, AlertCircle, Send, User, Cake, HeartPulse, ShieldCheck, Briefcase, Clock, CalendarDays, Palmtree, UserCheck, Loader2, XCircle, Check, X
+  CheckCircle, AlertCircle, Send, User, Cake, HeartPulse, ShieldCheck, CalendarDays, Palmtree, UserCheck, Loader2, X, Check, Clock
 } from 'lucide-react';
 import { HRTabs, HRTabType } from '../components/HRTabs';
 import { ListFilter, FilterOption } from '../components/ListFilter';
 import { ShiftScheduleModal } from '../components/ShiftScheduleModal';
 import { AttendanceAdjustmentModal } from '../components/AttendanceAdjustmentModal';
-import { format, addDays, isSameDay, isWithinInterval, parseISO } from 'date-fns';
+import { format, addDays, isSameDay, isWithinInterval, parseISO, startOfWeek } from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { Modal } from '../components/Modal';
 
@@ -26,6 +26,9 @@ export const Collaborators: React.FC = () => {
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const selectedMonthStr = format(currentDate, 'yyyy-MM');
+
+  // NEW: Mobile specific state for Shift Agenda
+  const [mobileSelectedDate, setMobileSelectedDate] = useState(new Date());
 
   const [isScheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState<Collaborator | null>(null);
@@ -56,6 +59,16 @@ export const Collaborators: React.FC = () => {
 
     return Array.from({ length: 7 }, (_, i) => addDays(start, i));
   }, [currentDate]);
+
+  // Effect to sync mobile selection when week changes
+  useEffect(() => {
+      const start = weekDays[0];
+      const end = weekDays[6];
+      // If currently selected mobile date is out of view, reset to first day of week
+      if (!isWithinInterval(mobileSelectedDate, { start, end })) {
+          setMobileSelectedDate(start);
+      }
+  }, [weekDays, mobileSelectedDate]);
 
   const timesheetData = useMemo(() => {
      // Use native Date to get start and end of month
@@ -570,30 +583,39 @@ export const Collaborators: React.FC = () => {
             </div>
           </div>
 
-          {/* Mobile Card List */}
+          {/* Mobile Profile Cards */}
           <div className="md:hidden space-y-3">
              {filteredCollaborators.map(c => (
-                 <div key={c.id} className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
-                     <div className="flex justify-between items-start">
+                 <div key={c.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 flex flex-col gap-3">
+                     <div className="flex items-start justify-between">
                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-black shadow-md" style={{ backgroundColor: c.color || '#3b82f6' }}>
+                            <div className="w-14 h-14 rounded-full flex items-center justify-center text-white text-lg font-black shadow-lg ring-2 ring-offset-2 ring-white" style={{ backgroundColor: c.color || '#3b82f6' }}>
                                 {(c.collaboratorName || '?').charAt(0)}
                             </div>
                             <div>
-                                <div className="font-bold text-slate-800">{c.collaboratorName}</div>
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${getRoleBadgeColor(c.role)}`}>
-                                    {c.role}
-                                </span>
+                                <h3 className="font-black text-slate-800 text-lg">{c.collaboratorName}</h3>
+                                <div className="flex items-center gap-2 mt-1">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${getRoleBadgeColor(c.role)}`}>
+                                        {c.role}
+                                    </span>
+                                    <span className="text-xs text-slate-400">@{c.username}</span>
+                                </div>
                             </div>
                          </div>
-                         <div className="flex gap-2">
-                             <button onClick={() => handleEdit(c)} className="p-2 text-blue-600 bg-blue-50 rounded-lg"><Pencil size={16}/></button>
-                             <button onClick={() => { if(confirm('Xóa nhân viên?')) deleteCollaborator(c.id); }} className="p-2 text-rose-600 bg-rose-50 rounded-lg"><Trash2 size={16}/></button>
-                         </div>
                      </div>
-                     <div className="mt-3 pt-3 border-t border-slate-50 flex justify-between items-center text-sm">
-                         <span className="text-slate-500">Lương cứng:</span>
-                         <span className="font-bold text-slate-800">{(Number(c.baseSalary) || 0).toLocaleString()} VND</span>
+                     
+                     <div className="bg-slate-50 p-3 rounded-xl flex items-center justify-between">
+                         <span className="text-xs font-bold text-slate-500 uppercase">Lương cứng</span>
+                         <span className="font-black text-slate-800 text-lg">{(Number(c.baseSalary) || 0).toLocaleString()} <span className="text-xs font-bold text-slate-400">đ</span></span>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-3 pt-1">
+                         <button onClick={() => handleEdit(c)} className="py-3 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100 flex items-center justify-center gap-2">
+                             <Pencil size={16}/> Chỉnh sửa
+                         </button>
+                         <button onClick={() => { if(confirm('Xóa nhân viên?')) deleteCollaborator(c.id); }} className="py-3 bg-rose-50 text-rose-600 rounded-xl font-bold text-sm hover:bg-rose-100 flex items-center justify-center gap-2">
+                             <Trash2 size={16}/> Xóa
+                         </button>
                      </div>
                  </div>
              ))}
@@ -613,10 +635,11 @@ export const Collaborators: React.FC = () => {
                 </div>
              </div>
 
-             <div className="flex items-center gap-3 w-full md:w-auto">
-                 <div className="flex flex-1 md:flex-none items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50 justify-between md:justify-start">
+             {/* Week Navigation (Desktop) */}
+             <div className="hidden md:flex items-center gap-3">
+                 <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
                     <button onClick={() => setCurrentDate(addDays(currentDate, -7))} className="p-2 hover:bg-white text-slate-500 border-r border-slate-200 transition-colors"><ChevronLeft size={18}/></button>
-                    <span className="px-2 md:px-4 py-2 text-xs md:text-sm font-bold text-slate-700 min-w-[150px] md:min-w-[180px] text-center">
+                    <span className="px-4 py-2 text-sm font-bold text-slate-700 min-w-[180px] text-center">
                         {format(weekDays[0], 'dd/MM')} - {format(weekDays[6], 'dd/MM')}
                     </span>
                     <button onClick={() => setCurrentDate(addDays(currentDate, 7))} className="p-2 hover:bg-white text-slate-500 border-l border-slate-200 transition-colors"><ChevronRight size={18}/></button>
@@ -624,7 +647,8 @@ export const Collaborators: React.FC = () => {
              </div>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden relative">
+          {/* DESKTOP WEEKLY TABLE */}
+          <div className="hidden md:block bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden relative">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[900px]">
                 <thead className="bg-slate-50/80 backdrop-blur-md border-b border-slate-200">
@@ -693,6 +717,97 @@ export const Collaborators: React.FC = () => {
                <span className="flex items-center gap-1.5 whitespace-nowrap"><Moon size={14} className="text-indigo-700"/> Ca Tối (Đêm)</span>
                <span className="flex items-center gap-1.5 whitespace-nowrap"><div className="w-3 h-3 rounded-full bg-slate-200"></div> Ngày Nghỉ (OFF)</span>
             </div>
+          </div>
+
+          {/* MOBILE AGENDA VIEW */}
+          <div className="md:hidden space-y-4">
+              {/* Horizontal Date Picker */}
+              <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar px-1">
+                  {weekDays.map(day => {
+                      const isSelected = isSameDay(day, mobileSelectedDate);
+                      const isToday = isSameDay(day, new Date());
+                      return (
+                          <button
+                              key={day.toISOString()}
+                              onClick={() => setMobileSelectedDate(day)}
+                              className={`
+                                  flex flex-col items-center justify-center p-3 rounded-xl min-w-[70px] border-2 transition-all
+                                  ${isSelected 
+                                      ? 'bg-brand-600 border-brand-600 text-white shadow-lg shadow-brand-200 scale-105' 
+                                      : 'bg-white border-slate-100 text-slate-500'}
+                              `}
+                          >
+                              <span className="text-[10px] font-bold uppercase">{format(day, 'EEE', {locale: vi})}</span>
+                              <span className="text-lg font-black">{format(day, 'dd')}</span>
+                              {isToday && <div className={`w-1.5 h-1.5 rounded-full mt-1 ${isSelected ? 'bg-white' : 'bg-brand-500'}`}></div>}
+                          </button>
+                      )
+                  })}
+              </div>
+
+              {/* Agenda Body */}
+              <div className="space-y-4">
+                  {/* CA SÁNG */}
+                  <div className="bg-amber-50/50 rounded-2xl p-4 border border-amber-100">
+                      <div className="flex items-center gap-2 mb-3 text-amber-800 font-black uppercase text-xs tracking-widest">
+                          <Sun size={16}/> Ca Sáng (Ngày)
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                          {collaborators.filter(c => {
+                              const s = schedules.find(sch => sch.staff_id === c.id && sch.date === format(mobileSelectedDate, 'yyyy-MM-dd'));
+                              return s?.shift_type === 'Sáng' || s?.shift_type === 'Chiều'; // Handle legacy 'Chiều'
+                          }).map(c => (
+                              <div key={c.id} onClick={() => openScheduleSlot(c, mobileSelectedDate)} className="bg-white p-3 rounded-xl border border-amber-200 shadow-sm flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-md" style={{ backgroundColor: c.color }}>{c.collaboratorName.charAt(0)}</div>
+                                  <div>
+                                      <div className="font-bold text-slate-800">{c.collaboratorName}</div>
+                                      <div className="text-xs text-slate-400 font-bold uppercase">{c.role}</div>
+                                  </div>
+                              </div>
+                          ))}
+                          {/* Add Button Logic? No, list remaining staff in separate block */}
+                      </div>
+                  </div>
+
+                  {/* CA TỐI */}
+                  <div className="bg-indigo-50/50 rounded-2xl p-4 border border-indigo-100">
+                      <div className="flex items-center gap-2 mb-3 text-indigo-800 font-black uppercase text-xs tracking-widest">
+                          <Moon size={16}/> Ca Tối (Đêm)
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                          {collaborators.filter(c => {
+                              const s = schedules.find(sch => sch.staff_id === c.id && sch.date === format(mobileSelectedDate, 'yyyy-MM-dd'));
+                              return s?.shift_type === 'Tối';
+                          }).map(c => (
+                              <div key={c.id} onClick={() => openScheduleSlot(c, mobileSelectedDate)} className="bg-white p-3 rounded-xl border border-indigo-200 shadow-sm flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-md" style={{ backgroundColor: c.color }}>{c.collaboratorName.charAt(0)}</div>
+                                  <div>
+                                      <div className="font-bold text-slate-800">{c.collaboratorName}</div>
+                                      <div className="text-xs text-slate-400 font-bold uppercase">{c.role}</div>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+
+                  {/* CHƯA PHÂN CA / OFF */}
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                      <div className="flex items-center gap-2 mb-3 text-slate-500 font-black uppercase text-xs tracking-widest">
+                          Chưa phân ca / Nghỉ
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                          {collaborators.filter(c => {
+                              const s = schedules.find(sch => sch.staff_id === c.id && sch.date === format(mobileSelectedDate, 'yyyy-MM-dd'));
+                              return !s || s.shift_type === 'OFF';
+                          }).map(c => (
+                              <div key={c.id} onClick={() => openScheduleSlot(c, mobileSelectedDate)} className="bg-white p-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
+                                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ backgroundColor: c.color }}>{c.collaboratorName.charAt(0)}</div>
+                                  <div className="truncate text-xs font-bold text-slate-600">{c.collaboratorName}</div>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              </div>
           </div>
         </div>
       )}
@@ -878,13 +993,13 @@ export const Collaborators: React.FC = () => {
             </div>
           </div>
 
-          {/* Mobile Card List for Timesheet */}
+          {/* Mobile Salary Summary Cards */}
           <div className="md:hidden space-y-3">
              {timesheetData.map(row => (
-                 <div key={row.staff.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
-                     <div className="flex justify-between items-start mb-3">
+                 <div key={row.staff.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                     <div className="flex justify-between items-start">
                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white text-xs font-black" style={{ backgroundColor: row.staff.color || '#3b82f6' }}>
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-black shadow-md" style={{ backgroundColor: row.staff.color || '#3b82f6' }}>
                                 {(row.staff.collaboratorName || '?').charAt(0)}
                             </div>
                             <div>
@@ -892,27 +1007,29 @@ export const Collaborators: React.FC = () => {
                                 <div className="text-[10px] text-slate-400 font-medium uppercase">{row.staff.role}</div>
                             </div>
                          </div>
-                         <button onClick={() => openAdjustment(row.staff)} className="p-2 text-blue-600 bg-blue-50 rounded-lg"><Edit2 size={16} /></button>
+                         <button onClick={() => openAdjustment(row.staff)} className="text-[10px] font-bold bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200">
+                             Điều chỉnh
+                         </button>
                      </div>
-                     <div className="grid grid-cols-2 gap-2 text-sm">
-                         <div className="bg-slate-50 p-2 rounded-lg text-center">
-                             <div className="text-xs text-slate-400">Ca Sáng</div>
-                             <div className="font-bold">{row.dayShifts}</div>
+                     
+                     <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                         <div className="flex justify-between items-end mb-2">
+                             <span className="text-xs font-bold text-slate-500 uppercase">Tổng công</span>
+                             <span className="text-xl font-black text-slate-800">{row.standardDays.toFixed(1)} <span className="text-xs font-medium text-slate-400">ngày</span></span>
                          </div>
-                         <div className="bg-indigo-50 p-2 rounded-lg text-center text-indigo-700">
-                             <div className="text-xs opacity-70">Ca Tối</div>
-                             <div className="font-bold">{row.nightShifts}</div>
+                         {/* Progress Bar Visual */}
+                         <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                             <div className="bg-brand-500 h-2 rounded-full" style={{ width: `${Math.min(100, (row.standardDays / 26) * 100)}%` }}></div>
+                         </div>
+                         <div className="flex justify-between text-[9px] text-slate-400 mt-1 uppercase font-bold">
+                             <span>0</span>
+                             <span>26 (Chuẩn)</span>
                          </div>
                      </div>
-                     <div className="mt-3 flex justify-between items-center border-t border-slate-50 pt-2">
-                         <div className="text-center">
-                             <div className="text-xs text-slate-400">Tổng công</div>
-                             <div className="font-black text-brand-600">{row.standardDays.toFixed(1)}</div>
-                         </div>
-                         <div className="text-right">
-                             <div className="text-xs text-slate-400">Lương tạm tính</div>
-                             <div className="font-black text-emerald-600">{row.calculatedSalary.toLocaleString()} ₫</div>
-                         </div>
+
+                     <div className="flex justify-between items-center pt-2 border-t border-slate-50">
+                         <span className="text-xs font-bold text-slate-400 uppercase">Lương tạm tính</span>
+                         <span className="font-black text-lg text-emerald-600">{row.calculatedSalary.toLocaleString()} ₫</span>
                      </div>
                  </div>
              ))}
