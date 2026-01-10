@@ -3,8 +3,8 @@ import { Settings, Facility, Collaborator, Booking, Expense, ServiceItem, Room, 
 
 // --- PERMISSION MATRIX ---
 export const ROLE_PERMISSIONS: Record<string, string[]> = {
-  'Admin': ['/dashboard', '/bookings', '/rooms', '/housekeeping', '/inventory', '/customers', '/collaborators', '/expenses', '/settings'], 
-  'Quản lý': ['/dashboard', '/bookings', '/rooms', '/housekeeping', '/inventory', '/customers', '/collaborators', '/expenses', '/settings'],
+  'Admin': ['/dashboard', '/bookings', '/rooms', '/housekeeping', '/inventory', '/customers', '/collaborators', '/expenses', '/settings', '/staff-portal'], 
+  'Quản lý': ['/dashboard', '/bookings', '/rooms', '/housekeeping', '/inventory', '/customers', '/collaborators', '/expenses', '/settings', '/staff-portal'],
   'Nhân viên': ['/dashboard', '/bookings', '/rooms', '/housekeeping', '/customers', '/inventory', '/staff-portal'],
   'Nhà đầu tư': ['/dashboard'],
   'Buồng phòng': ['/staff-portal']

@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   LogOut, CheckCircle, Clock, MapPin, 
   ChevronRight, CheckSquare, Square, 
-  ArrowLeft, ListChecks, Info, Shirt, Loader2, Beer, Package, Plus, Minus, RefreshCw, ArchiveRestore
+  ArrowLeft, ListChecks, Info, Shirt, Loader2, Beer, Package, Plus, Minus, RefreshCw, ArchiveRestore, LayoutDashboard
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { HousekeepingTask, ChecklistItem, RoomRecipeItem, ServiceItem, LendingItem } from '../types';
@@ -73,8 +73,12 @@ export const StaffPortal: React.FC = () => {
         const facility = facilities.find(f => f.id === room.facility_id);
         if (!facility) return;
         
-        const isMyFacility = !facility.staff || facility.staff.length === 0 || (currentUser && facility.staff.includes(currentUser.collaboratorName));
-        if (!isMyFacility) return;
+        // Logic: Nếu không phải Buồng phòng (vd Admin/Quản lý), hiển thị ALL tasks
+        // Nếu là Buồng phòng, chỉ hiển thị task thuộc cơ sở được phân công (hoặc all nếu ko phân công)
+        const canViewAll = currentUser?.role !== 'Buồng phòng';
+        const isAssigned = !facility.staff || facility.staff.length === 0 || (currentUser && facility.staff.includes(currentUser.collaboratorName));
+        
+        if (!canViewAll && !isAssigned) return;
 
         if (room.status === 'Đã dọn') {
             const existingTask = dbTasksMap.get(`${room.facility_id}_${room.name}`);
@@ -323,6 +327,11 @@ export const StaffPortal: React.FC = () => {
                 </div>
             </div>
             <div className="flex gap-2">
+                {currentUser?.role !== 'Buồng phòng' && (
+                    <button onClick={() => navigate('/dashboard')} className="p-2 text-slate-400 hover:text-brand-600 transition-colors" title="Về Dashboard">
+                        <LayoutDashboard size={20} />
+                    </button>
+                )}
                 <button onClick={handleRefresh} disabled={isLoading} className={`p-2 transition-colors ${isLoading ? 'text-brand-600 animate-spin' : 'text-slate-400 hover:text-brand-600'}`}>
                     <RefreshCw size={20} />
                 </button>

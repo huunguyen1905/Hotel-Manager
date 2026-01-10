@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, CalendarCheck, DoorOpen, Users, 
-  Wallet, Settings, LogOut, Brush, ChevronRight, Contact, Package, Clock, X
+  Wallet, Settings, LogOut, Brush, ChevronRight, Contact, Package, Clock, X, Smartphone
 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { storageService } from '../services/storage';
@@ -26,6 +26,7 @@ export const Sidebar: React.FC<{ isOpen: boolean; toggle: () => void }> = ({ isO
     { to: '/bookings', icon: CalendarCheck, label: 'Lịch đặt phòng' },
     { to: '/rooms', icon: DoorOpen, label: 'Phòng & Cơ sở' },
     { to: '/housekeeping', icon: Brush, label: 'Buồng phòng' },
+    { to: '/staff-portal', icon: Smartphone, label: 'App Nhân Viên' },
     { to: '/inventory', icon: Package, label: 'Kho & Vật tư' },
     { to: '/customers', icon: Contact, label: 'Khách hàng (CRM)' }, 
     { to: '/collaborators', icon: Users, label: 'Nhân sự' },
